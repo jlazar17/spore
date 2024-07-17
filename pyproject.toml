@@ -11,6 +11,8 @@ h5py = "^3.11.0"
 numpy = "^2.0.0"
 scipy = "^1.14.0"
 tqdm = "^4.66.4"
+matplotlib = "^3.9.1"
+ipykernel = "^6.29.5"
 
 
 [build-system]
