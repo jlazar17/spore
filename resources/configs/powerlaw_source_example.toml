@@ -1,0 +1,14 @@
+[flux]
+pivot = 1e5 # GeV
+normalization = 1e-18 # 1 / GeV / cm^2 / sec / sr
+
+[flux.energy]
+
+gamma = 2
+emin = 1e3 # GeV
+emax = 1e6 # GeV
+
+[location]
+
+right_ascension = 50 # degrees
+declination = 5 # degrees
