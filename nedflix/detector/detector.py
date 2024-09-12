@@ -2,20 +2,16 @@ import numpy as np
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Tuple, Callable, Dict
+from typing import Dict
 
-from .units import units
-from .coordinates import EarthCoordinate
-from .neutrino import Flavor, NeutrinoType
+from ..coordinates import EarthCoordinate
+from ..neutrino import Flavor, NeutrinoType, neutrinos
+from . import units
+from .detector_response import DetectorResponse, detector_response_from_config
 
 def Medium(Enum):
     Ice: 1
     Water: 2
-
-@dataclass(frozen=True)
-class DetectorResponse
-    angular_response: Dict{Tuple{Flavor, NeutrinoType}, Callable}
-    energy_response: Dict{Tuple{Flavor, NeutrinoType}, Callable}
 
 @dataclass(frozen=True)
 class Detector:
@@ -23,4 +19,13 @@ class Detector:
     depth: float
     medium: Medium
     response: DetectorResponse
-    effective_area: Callable
+
+def detector_from_config(config: Dict) -> Detector:
+    location = EarthCoordinate(
+        config["properties"]["latitude"],
+        config["properties"]["longitude"],
+    )
+    depth = config["properties"]["depth"] * units.m
+    medium = getattr(Medium, config["properties"]["medium"])
+    detector_response = detector_response_from_config(config["response"])
+    return Detector(location, depth, medium, detector_response)
