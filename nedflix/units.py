@@ -1,115 +1,89 @@
-from dataclasses import dataclass
-from collections import namedtuple
-from typing import Union
+import numpy as np
 
-class NotUnitfulError(Exception):
-    pass
+class Units():
 
-class DimensionMisMatchError(Exception):
-    pass
+    def __init__(self):
+        ## PHYSICS CONSTANTS
+        #===========================================================================
+        # NAME
+        #===========================================================================
 
-def has_same_dimensionality(x, y):
-    return x._l==y._l and x._e==y._e and x._t==y._t and x._q==y._q
+        self.name = "STD"                    # Default values
+        self.linestyle = "solid"             # Default linestyle in plots
+        self.markerstyle = "*"               # Default marker style
+        self.colorstyle = "red"              # Default color style
+        self.savefilename = "output.dat"     # Default color style
 
+        #===============================================================================
+        # ## MATH
+        #===============================================================================
+        self.PI=3.14159265                  # Pi
+        self.PIby2=1.5707963268             # Pi/2
+        self.sqr2=1.4142135624              # Sqrt[2]
+        self.ln2 = np.log(2.0)
 
-def check_same_dimensionality(x, y):
-    if not has_same_dimensionality(x, y):
-        raise DimensionMisMatchError
+        #===============================================================================
+        # ## EARTH
+        #===============================================================================
+        self.EARTHRADIUS = 6371.0           # [km] Earth radius
+        #===============================================================================
+        # ## SUN
+        #===============================================================================
+        self.SUNRADIUS = 109*self.EARTHRADIUS     # [km] Sun radius
 
-def check_is_unitful(x):
-    if not isinstance(x, UnitfulQuantity):
-        raise NotUnitfulError
+        #===============================================================================
+        # # PHYSICAL CONSTANTS
+        #===============================================================================
+        self.GF = 1.16639e-23               # [eV^-2] Fermi Constant
+        self.Na = 6.0221415e+23                 # [mol cm^-3] Avogadro Number
+        self.sw_sq = 0.2312                  # [dimensionless] sin(th_weinberg) ^2
+        self.G  = 6.67300e-11                # [m^3 kg^-1 s^-2]
+        self.alpha = 1.0/137.0               # [dimensionless] fine-structure constant
 
-@dataclass
-class UnitfulQuantity:
+        #===============================================================================
+        # ## UNIT CONVERSION FACTORS
+        #===============================================================================
+        # Energy
+        self.TeV = 1.0e12                    # [eV/TeV]
+        self.GeV = 1.0e9                     # [eV/GeV]
+        self.MeV = 1.0e6                     # [eV/MeV]
+        self.keV = 1.0e3                     # [eV/keV]
+        self.Joule = 1/1.60225e-19           # [eV/J]
+        # Mass
+        self.kg = 5.62e35                    # [eV/kg]
+        self.gr = 1e-3*self.kg               # [eV/g]
+        # Time
+        self.sec = 1.523e15                  # [eV^-1/s]
+        self.hour = 3600.0*self.sec          # [eV^-1/h]
+        self.day = 24.0*self.hour            # [eV^-1/d]
+        self.year = 365.0*self.day           # [eV^-1/yr]
+        self.yearstosec = self.sec/self.year # [s/yr]
+        # Distance
+        self.meter = 806554.815355           # [eV^-1/m]
+        self.cm = 1.0e-2*self.meter          # [eV^-1/cm]
+        self.km = 1.0e3*self.meter           # [eV^-1/km]
+        self.fermi = 1.0e-15*self.meter      # [eV^-1/fm]
+        self.angstrom = 1.0e-10*self.meter   # [eV^-1/A]
+        self.AU = 149.60e9*self.meter        # [eV^-1/AU]
+        self.parsec = 3.08568025e16*self.meter# [eV^-1/parsec]
+        # Integrated Luminocity # review
+        self.picobarn = 1.0e-36*self.cm**2   # [eV^-2/pb]
+        self.femtobarn = 1.0e-39*self.cm**2  # [eV^-2/fb]
+        # Presure
+        self.Pascal = self.Joule/self.meter**3 # [eV^4/Pa]
+        self.hPascal = 100.0*self.Pascal     # [eV^4/hPa]
+        self.atm = 101325.0*self.Pascal      # [eV^4/atm]
+        self.psi = 6893.0*self.Pascal        # [eV^4/psi]
+        # Temperature
+        self.kelvin = 1/1.1604505e4          # [eV/K]
+        # Angle
+        self.degree = self.PI/180.0          # [rad/degree]
+        # magnetic field
+        self.T = 0.000692445                 # [eV^2/T]
 
-    # def __init__(self, val: float, l: float, e: float, t: float, q: float):
-    _val: float
-    _l: int
-    _e: int
-    _t: int
-    _q: int
+        # old notation
+        self.cm3toev3 = 7.68351405e-15       # cm^3-> ev^3
+        self.KmtoEv =5.0677288532e+9         # km -> eV
+        self.yearstosec = 31536.0e3          # years -> sec
 
-    def __eq__(self, other):
-        check_is_unitful(other)
-        check_same_dimensionality(self, other)
-        return self._val==other._val
-
-    def __le__(self, other):
-        check_is_unitful(other)
-        check_same_dimensionality(self, other)
-        return self._val<=other._val
-
-    def __ge__(self, other):
-        check_is_unitful(other)
-        check_same_dimensionality(self, other)
-        return self._val>=other._val
-
-    def __lt__(self, other):
-        check_is_unitful(other)
-        check_same_dimensionality(self, other)
-        return self._val < other._val
-
-    def __gt__(self, other):
-        check_is_unitful(other)
-        check_same_dimensionality(self, other)
-        return self._val > other._val
-
-    def __add__(self, other):
-        check_is_unitful(other)
-        check_same_dimensionality(self, other)
-        return UnitfulQuantity(self._val + other._val, self._l, self._e, self._t, self._q)
-
-    def __sub__(self, other):
-        check_is_unitful(other)
-        check_same_dimensionality(self, other)
-        return UnitfulQuantity(self._val - other._val, self._l, self._e, self._t, self._q)
-
-    def __mul__(self, other):
-        if isinstance(other, UnitfulQuantity):
-            return UnitfulQuantity(self._val * other._val, self._l+other._l, self._e+other._e, self._t+other._t, self._q+other._q)
-        return UnitfulQuantity(self._val * other, self._l, self._e, self._t, self._q)
-
-    def __rmul__(self, other):
-        return UnitfulQuantity(self._val * other, self._l, self._e, self._t, self._q)
-
-    def __truediv__(self, other):
-        if isinstance(other, UnitfulQuantity):
-            return UnitfulQuantity(self._val / other._val, self._l-other._l, self._e-other._e, self._t-other._t, self._q-other._q)
-        return UnitfulQuantity(self._val / other, self._l, self._e, self._t, self._q)
-
-    def __rtruediv__(self, other):
-        return UnitfulQuantity(self._val / other, self._l, self._e, self._t, self._q)
-
-    def __mod__(self, other):
-        check_is_unitful(other)
-        check_same_dimensionality(self, other)
-        return self._val / other._val
-
-# Base units are 
-
-unit_names = "m GeV s coulomb sr cm ns us ms eV keV MeV TeV PeV joule c".split()
-Units = namedtuple("Units", unit_names)
-
-# Base quantities
-_m = UnitfulQuantity(1.0, 1.0, 0.0, 0.0, 0.0)
-_GeV = UnitfulQuantity(1.0, 0.0, 1.0, 0.0, 0.0)
-_s = UnitfulQuantity(1.0, 0.0, 0.0, 1.0, 0.0)
-_coulomb = UnitfulQuantity(1.0, 0.0, 0.0, 0.0, 1.0)
-_sr = UnitfulQuantity(1.0, 0.0, 0.0, 0.0, 0.0)
-# Derived quantities
-_cm = _m / 100
-_ns = _s / 1e9
-_us = _s / 1e6
-_ms = _s / 1e3
-_eV = _GeV / 1e9
-_keV = _GeV / 1e6
-_MeV = _GeV / 1e3
-_TeV = _GeV * 1e3
-_PeV = _GeV * 1e6
-_joule = 6241506479.9632 *_GeV
-_c = 299_792_458 * _m / _s
-
-units = Units(
-    _m, _GeV, _s, _coulomb, _sr, _cm, _ns, _us, _ms, _eV, _keV, _MeV, _TeV, _PeV, _joule, _c
-)
+units = Units()
