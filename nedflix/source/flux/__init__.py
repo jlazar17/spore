@@ -1,2 +1,2 @@
-from ..units import units
+from .. import units
 from .flux import Flux, flux_from_config
