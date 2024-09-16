@@ -1,0 +1,12 @@
+title = "IceCube"
+
+[properties]
+
+latitude = -90.0 # degrees
+longitude = 0.0 # degrees
+depth = 1945 # m
+medium = "Ice"
+
+[response]
+
+detector_response_file = "/resources/example_detector_response.h5"
