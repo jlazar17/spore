@@ -1,9 +1,9 @@
 import numpy as np
 
 from dataclasses import dataclass
-from typing import Callable, Tuple, Dict
+from typing import Dict
 
-from .coordinates import SkyCoordinate
+from ..conventions import SkyCoordinate
 from .flux import Flux, flux_from_config
 
 @dataclass(frozen=True)
