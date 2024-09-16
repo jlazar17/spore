@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from ..physics import InteractionType, Neutrino
 from .coordinates import SkyCoordinate
 
 @dataclass(frozen=False)
