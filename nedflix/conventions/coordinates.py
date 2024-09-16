@@ -27,6 +27,12 @@ class SkyCoordinate:
             from warnings import warn
             warn("right ascension not in 0 < RA < 2pi. Moving to proper branch.")
             self.right_ascension = self.right_ascension % (2*np.pi)
+
+    def to_cartesian(self) -> np.ndarray:
+        x = np.cos(self.declination) * np.cos(self.right_ascension)
+        y = np.cos(self.declination) * np.sin(self.right_ascension)
+        z = np.sin(self.declination)
+        return np.array([x, y, z])
         
 @dataclass
 class EarthCoordinate:
