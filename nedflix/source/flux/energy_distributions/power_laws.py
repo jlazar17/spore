@@ -13,7 +13,12 @@ class PowerLaw(EnergyDistribution):
         return self._gamma
 
     def pdf(self, e: float) -> float:
-        raise NotImplementedError("PDF not implemented")
+        if self.gamma==1:
+            norm = 1 / np.log(self.emax / self.emin)
+        else:
+            mg = 1 - self.gamma
+            norm = mg / (np.power(self.emax, mg) - np.power(self.emin, mg))
+        return norm * e**-self.gamma
 
     def cdf(self, e: float) -> float:
         raise NotImplementedError("CDF not implemented")
