@@ -20,10 +20,10 @@ class Flux:
 
     def __call__(self, e: float):
         emin = self.energy_distribution.emin
-        emax = self.energy_distribution.emin
+        emax = self.energy_distribution.emax
         if e < emin or e > emax:
             raise ValueError(f"Energy {e} not in range [{emin}, {emax}]")
-        return self.normalization * self.energy_distribution.pdf(e) / self.energy_distribution.pdf(pivot)
+        return self.normalization * self.energy_distribution.pdf(e) / self.energy_distribution.pdf(self.pivot)
 
     def sample_energy(self):
         return self.energy_distribution.sample_energy()
