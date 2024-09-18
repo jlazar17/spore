@@ -53,6 +53,9 @@ def sample_cone(
     xyz_prime = sample_ring(xyz, psi)
     dec = np.arcsin(xyz_prime[2])
     ra = np.arctan2(xyz_prime[1], xyz_prime[0])
+    # Move ra to the expected branch
+    if ra < 0:
+        ra += 2 * np.pi
     return SkyCoordinate(dec, ra)
     
 
