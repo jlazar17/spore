@@ -29,8 +29,15 @@ def ang_spline_from_group(gp: h5.Group) -> Callable:
         (np.log(gp["es"][:]), gp["us"][:]),
         gp["inv_cdfs"][:]
     )
-    fxn = lambda e, u: i((np.log(e), u))
-    return fxn
+    def fxn(e, u, umax):
+        if u > umax:
+            u = umax
+        try:
+            return i((np.log(e), u))
+        except ValueError as e:
+            print(e, u)
+            raise e
+    return lambda e, u: fxn(e, u, i.grid[1].max())
 
 def energy_spline_from_group(gp: h5.Group) -> Callable:
     i = interp1d(
@@ -81,18 +88,18 @@ def detector_response_from_config(config: Dict) -> DetectorResponse:
     }
 
     energy_response = {
-        (Neutrino.NuE, InteractionType.ChargedCurrent): cscd_ang,
-        (Neutrino.NuMu, InteractionType.ChargedCurrent): track_ang,
-        (Neutrino.NuTau, InteractionType.ChargedCurrent): cscd_ang,
-        (Neutrino.NuEBar, InteractionType.ChargedCurrent): cscd_ang,
-        (Neutrino.NuMuBar, InteractionType.ChargedCurrent): track_ang,
-        (Neutrino.NuTauBar, InteractionType.ChargedCurrent): cscd_ang,
-        (Neutrino.NuE, InteractionType.NeutralCurrent): cscd_ang,
-        (Neutrino.NuMu, InteractionType.NeutralCurrent): cscd_ang,
-        (Neutrino.NuTau, InteractionType.NeutralCurrent): cscd_ang,
-        (Neutrino.NuEBar, InteractionType.NeutralCurrent): cscd_ang,
-        (Neutrino.NuMuBar, InteractionType.NeutralCurrent): cscd_ang,
-        (Neutrino.NuTauBar, InteractionType.NeutralCurrent): cscd_ang,
+        (Neutrino.NuE, InteractionType.ChargedCurrent): cscd_energy,
+        (Neutrino.NuMu, InteractionType.ChargedCurrent): track_energy,
+        (Neutrino.NuTau, InteractionType.ChargedCurrent): cscd_energy,
+        (Neutrino.NuEBar, InteractionType.ChargedCurrent): cscd_energy,
+        (Neutrino.NuMuBar, InteractionType.ChargedCurrent): track_energy,
+        (Neutrino.NuTauBar, InteractionType.ChargedCurrent): cscd_energy,
+        (Neutrino.NuE, InteractionType.NeutralCurrent): cscd_energy,
+        (Neutrino.NuMu, InteractionType.NeutralCurrent): cscd_energy,
+        (Neutrino.NuTau, InteractionType.NeutralCurrent): cscd_energy,
+        (Neutrino.NuEBar, InteractionType.NeutralCurrent): cscd_energy,
+        (Neutrino.NuMuBar, InteractionType.NeutralCurrent): cscd_energy,
+        (Neutrino.NuTauBar, InteractionType.NeutralCurrent): cscd_energy,
     }
 
     return DetectorResponse(effective_area, angular_response, energy_response)
