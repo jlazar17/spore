@@ -29,9 +29,6 @@ pip3 install --user poetry-kernel
 
 and then launching a `jupyter` notebook with
 
-Nihau Perrine.
-Bonjour Jeff.
-
 
 ```bash
 jupyter notebook
