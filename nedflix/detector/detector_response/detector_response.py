@@ -58,18 +58,20 @@ def detector_response_from_config(config: Dict) -> DetectorResponse:
 
     # I know this is psycho. Don't @ me
     effective_area = {
-        (Neutrino.NuE, InteractionType.ChargedCurrent): cscd_effa,
-        (Neutrino.NuMu, InteractionType.ChargedCurrent): track_effa,
-        (Neutrino.NuTau, InteractionType.ChargedCurrent): cscd_effa,
-        (Neutrino.NuEBar, InteractionType.ChargedCurrent): cscd_effa,
-        (Neutrino.NuMuBar, InteractionType.ChargedCurrent): track_effa,
-        (Neutrino.NuTauBar, InteractionType.ChargedCurrent): cscd_effa,
-        (Neutrino.NuE, InteractionType.NeutralCurrent): cscd_effa,
-        (Neutrino.NuMu, InteractionType.NeutralCurrent): cscd_effa,
-        (Neutrino.NuTau, InteractionType.NeutralCurrent): cscd_effa,
-        (Neutrino.NuEBar, InteractionType.NeutralCurrent): cscd_effa,
-        (Neutrino.NuMuBar, InteractionType.NeutralCurrent): cscd_effa,
-        (Neutrino.NuTauBar, InteractionType.NeutralCurrent): cscd_effa,
+        "track": track_effa,
+        "cascade": cscd_effa
+        #(Neutrino.NuE, InteractionType.ChargedCurrent): cscd_effa,
+        #(Neutrino.NuMu, InteractionType.ChargedCurrent): track_effa,
+        #(Neutrino.NuTau, InteractionType.ChargedCurrent): cscd_effa,
+        #(Neutrino.NuEBar, InteractionType.ChargedCurrent): cscd_effa,
+        #(Neutrino.NuMuBar, InteractionType.ChargedCurrent): track_effa,
+        #(Neutrino.NuTauBar, InteractionType.ChargedCurrent): cscd_effa,
+        #(Neutrino.NuE, InteractionType.NeutralCurrent): cscd_effa,
+        #(Neutrino.NuMu, InteractionType.NeutralCurrent): cscd_effa,
+        #(Neutrino.NuTau, InteractionType.NeutralCurrent): cscd_effa,
+        #(Neutrino.NuEBar, InteractionType.NeutralCurrent): cscd_effa,
+        #(Neutrino.NuMuBar, InteractionType.NeutralCurrent): cscd_effa,
+        #(Neutrino.NuTauBar, InteractionType.NeutralCurrent): cscd_effa,
     }
 
     angular_response = {

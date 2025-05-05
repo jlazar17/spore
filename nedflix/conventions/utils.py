@@ -21,7 +21,7 @@ def sky_to_local(
     ______
     sc: the sky-fixed coordinate
     ec: the earth coordinate of the detector
-    t: time at which the event was observed
+    t: time at which the event was observed in modified julian days
     [depth]: depth of the detector
 
     returns
