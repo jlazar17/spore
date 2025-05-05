@@ -27,3 +27,6 @@ class Neutrino(Enum):
     NuEBar = NeutrinoDef(-12, NeutrinoType.NuBar, Flavor.Electron)
     NuMuBar = NeutrinoDef(-14, NeutrinoType.NuBar, Flavor.Muon)
     NuTauBar = NeutrinoDef(-16, NeutrinoType.NuBar, Flavor.Tau)
+
+    def __int__(self):
+        return int(self.value)
