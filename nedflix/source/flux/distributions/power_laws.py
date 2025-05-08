@@ -1,35 +1,45 @@
 import numpy as np
 
-from .energy_distribution import EnergyDistribution
+from typing import Dict, Optional
 
-class PowerLaw(EnergyDistribution):
+from .distribution import Distribution
+
+class PowerLaw(Distribution):
 
     def __init__(self, gamma: float, emin: float, emax: float):
+        emin, emax = float(emin), float(emax)
         self._gamma = gamma
-        super(PowerLaw, self).__init__(emin, emax)
+        if gamma==1:
+            norm = 1 / np.log(emax / emin)
+        else:
+            mg = 1 - gamma
+            norm = mg / (np.power(emax, mg) - np.power(emin, mg))
+        self._norm = norm
+        super().__init__(emin, emax)
 
     @property
     def gamma(self) -> float:
         return self._gamma
 
-    def pdf(self, e: float) -> float:
-        if self.gamma==1:
-            norm = 1 / np.log(self.emax / self.emin)
-        else:
-            mg = 1 - self.gamma
-            norm = mg / (np.power(self.emax, mg) - np.power(self.emin, mg))
-        return norm * e**-self.gamma
+    def density(self, e: float, dec: Optional[float]=None) -> float:
+        if not (self.emin <= e <= self.emax):
+            raise ValueError(f"Energy {e} not in range [{self._emin}, {self._emax}]")
+        return self._norm * e**-self.gamma
 
-    def cdf(self, e: float) -> float:
-        raise NotImplementedError("CDF not implemented")
+    #def sample_energy(self) -> float:
+    #    u = np.random.rand()
+    #    if self.gamma == 1:
+    #        b = self.emax ** u
+    #        a = self.emin ** (u - 1)
+    #        return b / a
+    #    mg = 1 - self.gamma
+    #    val = (u * self.emax ** mg + (1 - u) * self.emin**mg) ** (1 / mg)
+    #    return val
 
-    def sample_energy(self) -> float:
-        u = np.random.rand()
-        if self.gamma == 1:
-            b = self.emax ** u
-            a = self.emin ** (u - 1)
-            return b / a
-        mg = 1 - self.gamma
-        val = (u * self.emax ** mg + (1 - u) * self.emin**mg) ** (1 / mg)
-        return val
-
+    @classmethod
+    def from_config(cls, config: Dict):
+        gamma = config["gamma"]
+        emin = config["emin"] * units.GeV
+        emax = config["emax"] * units.GeV
+        distribution = cls(gamma, emin, emax)
+        return distribution
