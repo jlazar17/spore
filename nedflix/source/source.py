@@ -1,20 +1,16 @@
-import numpy as np
+from abc import ABC
 
-from dataclasses import dataclass
-from typing import Dict
+from . import Neutrino
+from .flux import Flux
 
-from ..conventions import SkyCoordinate
-from .flux import Flux, flux_from_config
+class Source(ABC):
+    
+    def __init__(self, flux: Flux):
+        self._flux = flux
 
-@dataclass(frozen=True)
-class Source:
-    location: SkyCoordinate
-    flux: Flux
+    @property
+    def flux(self):
+        return self._flux
 
-def source_from_config(config: Dict) -> Source:
-    location = SkyCoordinate(
-        np.radians(config["location"]["declination"]),
-        np.radians(config["location"]["right_ascension"])
-    )
-    flux = flux_from_config(config["flux"])
-    return Source(location, flux)
+    def __call__(self, nu: Neutrino, e: float, dec: float=None):
+        return self.flux(nu, e, dec)

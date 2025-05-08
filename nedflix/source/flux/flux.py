@@ -1,36 +1,63 @@
-import numpy as np
+import h5py as h5
 
-from dataclasses import dataclass
-from typing import Dict
+from typing import Optional, Dict
 
-from .. import units
-from .energy_distributions import EnergyDistribution
+from . import Neutrino, neutrinos
+from .distributions import Distribution 
 
-@dataclass
 class Flux:
-    pivot: float
-    normalization: float
-    energy_distribution: EnergyDistribution
+    
+    def __init__(
+            self,
+            normalizations: Dict[Neutrino, float],
+            distributions: Dict[Neutrino, Distribution]
+        ):
+        """
+        normalization: flux normalization calculated at point where reference density calulated
+        distribution: `Distribution` describing the energy (and potentially dec) functional form
+        """
 
-    def __post_init__(self):
-        emin = self.energy_distribution.emin
-        emax = self.energy_distribution.emax
-        if self.pivot < emin or emax < self.pivot:
-            raise ValueError("Pivot not with bounds of energy distribution")
+        self._normalizations = normalizations
+        self._distributions = distributions
 
-    def __call__(self, e: float):
-        emin = self.energy_distribution.emin
-        emax = self.energy_distribution.emax
-        if e < emin or e > emax:
-            raise ValueError(f"Energy {e} not in range [{emin}, {emax}]")
-        return self.normalization * self.energy_distribution.pdf(e) / self.energy_distribution.pdf(self.pivot)
+    def __call__(self, nu: Neutrino, e: float, dec: Optional[float]=None):
+        distribution, normalization = self._distributions[nu], self._normalizations[nu]
+        if dec is None:
+            return normalization * distribution.density(e)
+        return normalization * distribution.density(e, dec)
 
-    def sample_energy(self):
-        return self.energy_distribution.sample_energy()
+    @classmethod
+    def from_config(cls, config: Dict):
+        if all([x in config.keys() for x in "gamma emin emax norm".split()]):
+            from .distributions import PowerLaw
+            pl = PowerLaw(config["gamma"], config["emin"], config["emax"])
+            normalizations = {nu: config["norm"] for nu in neutrinos}
+            distributions = {nu: pl for nu in neutrinos}
+            return cls(normalizations, distributions)
 
-def flux_from_config(config: Dict) -> Flux:
-    from .energy_distributions import energy_distribution_from_config
-    pivot = config["pivot"] * units.GeV
-    normalization = config["normalization"] / (units.GeV * units.cm**2 * units.sec)
-    energy_distribution = energy_distribution_from_config(config["energy"])
-    return Flux(pivot, normalization, energy_distribution)
+        if "location" not in config.keys():
+            raise ValueError("Unable to parse requested flux")
+
+        filename, groupname = config["location"].split(":")
+        with h5.File(filename) as h5f:
+            gp = h5f[groupname]
+            ndim = gp["fluxes"].ndim
+        if ndim not in [2, 3]:
+            raise ValueError(f"dimensionality {ndim} invalid")
+        if ndim==2:
+            from .utils import parse_1d_file
+            from .distributions import UserProvidedDist1D
+            norms, spls, emin, emax = parse_1d_file(config["location"])
+            normalizations = {nu: n for nu, n in zip(neutrinos, norms)}
+            distributions = {
+                nu: UserProvidedDist1D(emin, emax, spl) for nu, spl in zip(neutrinos, spls)
+            }
+        else:
+            from .utils import parse_2d_file
+            from .distributions import UserProvidedDist2D
+            norms, spls, decmin, decmax, emin, emax = parse_2d_file(config["location"])
+            normalizations = {nu: n for nu, n in zip(neutrinos, norms)}
+            distributions = {
+                nu: UserProvidedDist2D(emin, emax, decmin, decmax, spl) for nu, spl in zip(neutrinos, spls)
+            }
+        return cls(normalizations, distributions)

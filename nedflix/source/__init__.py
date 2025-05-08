@@ -1,2 +1,4 @@
 from ..conventions import units
-from .source import Source, source_from_config
+from ..physics import Neutrino, neutrinos
+from .point_source import PointSource
+from .surrounding_source import SurroundingSource
