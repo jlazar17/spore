@@ -1,2 +1,2 @@
-from .. import units
-from .flux import Flux, flux_from_config
+from .. import units, Neutrino, neutrinos
+from .flux import Flux
