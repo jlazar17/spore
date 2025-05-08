@@ -1,20 +1,30 @@
 import numpy as np
 
-from dataclasses import dataclass
 from typing import Dict
 
 from ..conventions import SkyCoordinate
-from .flux import Flux, flux_from_config
+from . import Neutrino
+from .source import Source
+from .flux import Flux
 
-@dataclass(frozen=True)
-class Source:
-    location: SkyCoordinate
-    flux: Flux
+class PointSource(Source):
 
-def source_from_config(config: Dict) -> Source:
-    location = SkyCoordinate(
-        np.radians(config["location"]["declination"]),
-        np.radians(config["location"]["right_ascension"])
-    )
-    flux = flux_from_config(config["flux"])
-    return Source(location, flux)
+    def __init__(self, flux: Flux, location: SkyCoordinate):
+        self._location = location
+        super().__init__(flux)
+
+    @property
+    def location(self):
+        return self._location
+
+    def __call__(self, nu: Neutrino, e: float):
+        return self.flux(nu, e)
+
+    @classmethod
+    def from_config(cls, config: Dict) -> Source:
+        location = SkyCoordinate(
+            np.radians(config["location"]["declination"]),
+            np.radians(config["location"]["right_ascension"])
+        )
+        flux = Flux.from_config(config["flux"])
+        return cls(flux, location)
