@@ -4,13 +4,15 @@ import numpy as np
 from scipy.interpolate import CubicSpline, RegularGridInterpolator
 from scipy.integrate import quad
 
+from . import units
+
 def parse_2d_file(location: str):
     filename, groupname = location.split(":")
     with h5.File(filename) as h5f:
         gp = h5f[groupname]
         sindecs = gp["sindecs"][:]
-        es = gp["energies"][:]
-        fluxes = gp["fluxes"][:]
+        es = gp["energies"][:] * units.GeV
+        fluxes = gp["fluxes"][:] / units.GeV / units.cm**2 / units.sec
     
     # Verify equal spacing where expected. Not sure if this is necessary
     # But I didn't test it with other stuff
@@ -59,8 +61,8 @@ def parse_1d_file(location: str):
     filename, groupname = location.split(":")
     with h5.File(filename) as h5f:
         gp = h5f[groupname]
-        es = gp["energies"][:]
-        fluxes = gp["fluxes"][:, :]
+        es = gp["energies"][:] * units.GeV
+        fluxes = gp["fluxes"][:, :] / units.GeV / units.cm**2 / units.sec
 
     dfle = np.diff(np.log(es))
     if not np.all(np.isclose(dfle, dfle[0])):
@@ -78,6 +80,9 @@ def parse_1d_file(location: str):
         val, err = quad(g, np.log(es[0]), np.log(es[-1]))
         if err / val > 1e-5:
             raise ValueError
+        
+        norm = val / hack
+        spl = CubicSpline(np.log(es), np.log(flx / norm))
         spls.append(spl)
-        norms[idx] = val / hack
+        norms[idx] = norm
     return norms, spls, es.min(), es.max()

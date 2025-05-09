@@ -1,8 +1,9 @@
+import numpy as np
 import h5py as h5
 
 from typing import Optional, Dict
 
-from . import Neutrino, neutrinos
+from . import Neutrino, neutrinos, units
 from .distributions import Distribution 
 
 class Flux:
@@ -30,8 +31,16 @@ class Flux:
     def from_config(cls, config: Dict):
         if all([x in config.keys() for x in "gamma emin emax norm".split()]):
             from .distributions import PowerLaw
-            pl = PowerLaw(config["gamma"], config["emin"], config["emax"])
-            normalizations = {nu: config["norm"] for nu in neutrinos}
+            pl = PowerLaw.from_config(config)
+            norm = config["norm"] / units.GeV / units.cm**2 / units.sec
+            if config["gamma"]==1:
+                norm *= np.log(config["emax"] / config["emin"])
+            else:
+                emin = config["emin"] * units.GeV
+                emax = config["emax"] * units.GeV
+                p = (1 - config["gamma"])
+                norm *= (emax**p - emin**p) / p
+            normalizations = {nu: norm for nu in neutrinos}
             distributions = {nu: pl for nu in neutrinos}
             return cls(normalizations, distributions)
 

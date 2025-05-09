@@ -3,12 +3,13 @@ import numpy as np
 from typing import Dict, Optional
 
 from .distribution import Distribution
+from .. import units
 
 class PowerLaw(Distribution):
 
-    def __init__(self, gamma: float, emin: float, emax: float):
-        emin, emax = float(emin), float(emax)
-        self._gamma = gamma
+    def __init__(self, gamma: float, emin: float, emax: float, pivot: float):
+        emin, emax, pivot = float(emin), float(emax), float(pivot)
+        self._gamma, self._pivot = gamma, pivot
         if gamma==1:
             norm = 1 / np.log(emax / emin)
         else:
@@ -24,7 +25,7 @@ class PowerLaw(Distribution):
     def density(self, e: float, dec: Optional[float]=None) -> float:
         if not (self.emin <= e <= self.emax):
             raise ValueError(f"Energy {e} not in range [{self._emin}, {self._emax}]")
-        return self._norm * e**-self.gamma
+        return self._norm * (e / self._pivot)**-self.gamma
 
     #def sample_energy(self) -> float:
     #    u = np.random.rand()
@@ -41,5 +42,6 @@ class PowerLaw(Distribution):
         gamma = config["gamma"]
         emin = config["emin"] * units.GeV
         emax = config["emax"] * units.GeV
-        distribution = cls(gamma, emin, emax)
+        pivot = config["pivot"] * units.GeV
+        distribution = cls(gamma, emin, emax, pivot)
         return distribution
