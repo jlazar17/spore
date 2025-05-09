@@ -18,12 +18,13 @@ class Detector:
     medium: Medium
     response: DetectorResponse
 
-def detector_from_config(config: Dict) -> Detector:
-    location = EarthCoordinate(
-        np.radians(config["properties"]["latitude"]),
-        np.radians(config["properties"]["longitude"]),
-    )
-    depth = config["properties"]["depth"] * units.meter
-    medium = getattr(Medium, config["properties"]["medium"])
-    detector_response = detector_response_from_config(config["response"])
-    return Detector(location, depth, medium, detector_response)
+    @classmethod
+    def from_config(cls, config: Dict):
+        location = EarthCoordinate(
+            np.radians(config["properties"]["latitude"]),
+            np.radians(config["properties"]["longitude"]),
+        )
+        depth = config["properties"]["depth"] * units.meter
+        medium = getattr(Medium, config["properties"]["medium"])
+        detector_response = detector_response_from_config(config["response"])
+        return cls(location, depth, medium, detector_response)
