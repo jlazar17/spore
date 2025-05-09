@@ -6,7 +6,7 @@ from . import Neutrino
 from .source import Source
 from .flux import Flux
 
-class SurroundingSource(Source):
+class ExtendedSource(Source):
 
     def __init__(self, flux: Flux):
         super().__init__(flux)
