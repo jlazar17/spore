@@ -32,40 +32,43 @@ def is_numu(nu: Neutrino):
     return abs(int(nu))==14
 
 # TODO this assumes that \sigma_{nu}==\sigma_{\nubar}
-def sample_track_type(
-    ff_dict: Dict
-) -> Tuple[Neutrino, InteractionType]:
-    u = np.random.rand()
-    r = ff_dict[Neutrino.NuMu] / sum([f for nu,f in ff_dict.items() if is_numu(nu)])
-    if u < r:
-        return Neutrino.NuMu, InteractionType.ChargedCurrent
-    else:
-        return Neutrino.NuMuBar, InteractionType.ChargedCurrent
+#def sample_track_type(
+#    ff_dict: Dict
+#) -> Tuple[Neutrino, InteractionType]:
+#    u = np.random.rand()
+#    r = ff_dict[Neutrino.NuMu] / sum([f for nu,f in ff_dict.items() if is_numu(nu)])
+#    if u < r:
+#        return Neutrino.NuMu, InteractionType.ChargedCurrent
+#    else:
+#        return Neutrino.NuMuBar, InteractionType.ChargedCurrent
 
 # TODO this assumes that \sigma_{nu}==\sigma_{\nubar} and \sigma{CC}==3\sigma{NC}
-def sample_cascade_type(
-    ff_dict: Dict[Neutrino, float]
-) -> Tuple[Neutrino, InteractionType]:
+#def sample_cascade_type(
+#    ff_dict: Dict[Neutrino, float]
+#) -> Tuple[Neutrino, InteractionType]:
+#
+#    t, a = 0, []
+#    for nu, f in ff_dict.items():
+#        a.append((nu, t))
+#        r = 4 / 3
+#        if abs(int(nu))==14:
+#            r = 1/3
+#        t += f * r
+#    a = [(nu, x/t) for nu, x in a]
+#
+#    u, v = np.random.rand(), 1
+#    while u < v:
+#        nu, v = a.pop()
+#
+#    interaction = InteractionType.NeutralCurrent
+#    u = np.random.rand()
+#    if not is_numu(nu) and u > 0.25:
+#        interaction = InteractionType.ChargedCurrent
+#
+#    return nu, interaction
 
-    t, a = 0, []
-    for nu, f in ff_dict.items():
-        a.append((nu, t))
-        r = 4 / 3
-        if abs(int(nu))==14:
-            r = 1/3
-        t += f * r
-    a = [(nu, x/t) for nu, x in a]
 
-    u, v = np.random.rand(), 1
-    while u < v:
-        nu, v = a.pop()
-
-    interaction = InteractionType.NeutralCurrent
-    u = np.random.rand()
-    if not is_numu(nu) and u > 0.25:
-        interaction = InteractionType.ChargedCurrent
-
-    return nu, interaction
+def get_
 
 def get_new_event(
     source: Source,
