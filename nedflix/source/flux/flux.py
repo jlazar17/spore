@@ -51,6 +51,8 @@ class Flux:
         with h5.File(filename) as h5f:
             gp = h5f[groupname]
             ndim = gp["fluxes"].ndim
+            if gp["fluxes"].shape[0]!=6:
+                raise ValueError("Fist dimension must have size 6.")
         if ndim not in [2, 3]:
             raise ValueError(f"dimensionality {ndim} invalid")
         if ndim==2:
