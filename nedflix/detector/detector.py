@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Dict
 
 from ..conventions import EarthCoordinate, units
-from .detector_response import DetectorResponse, detector_response_from_config
+from .detector_response import DetectorResponse
 
 class Medium(Enum):
     Ice = 1
@@ -26,5 +26,5 @@ class Detector:
         )
         depth = config["properties"]["depth"] * units.meter
         medium = getattr(Medium, config["properties"]["medium"])
-        detector_response = detector_response_from_config(config["response"])
+        detector_response = DetectorResponse.from_config(config["response"])
         return cls(location, depth, medium, detector_response)
