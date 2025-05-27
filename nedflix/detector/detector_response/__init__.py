@@ -1,2 +1,2 @@
 from .. import units
-from .detector_response import DetectorResponse, detector_response_from_config
+from .detector_response import DetectorResponse
