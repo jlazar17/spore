@@ -16,6 +16,7 @@ ipykernel = "^6.29.5"
 astropy = "^6.1.2"
 pytoml = "^0.1.21"
 jupyter = "^1.1.1"
+jupyterlab = "^4.4.2"
 
 [build-system]
 requires = ["poetry-core"]
