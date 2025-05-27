@@ -4,10 +4,19 @@ from tqdm import tqdm
 
 from .utils import new_sample
 
-def metropolis_hastings(target_density, x0, bounds, size=500000):
+def metropolis_hastings(
+    target_density,
+    x0,
+    bounds,
+    size=500000,
+    track=False
+):
     xt = x0
     samples = []
-    for i in tqdm(range(size)):
+    itr = range(size)
+    if track:
+        itr = tqdm(itr)
+    for _ in itr:
         xt_candidate = new_sample(bounds)
         try:
             accept_prob = (target_density(xt_candidate))/(target_density(xt))
