@@ -139,13 +139,17 @@ class ExtendedSourceEventSampler(EventSampler):
                 t_event = t
             else:
                 t_event = t + np.random.uniform(low=-deltat/2, high=deltat/2) / (24 * 3600 * units.sec)
+            morphology_id = 1
+            if morphology=="track":
+                morphology_id = 2
             event = Event(
                 true_direction,
                 reco_direction,
                 true_energy,
                 reco_energy,
                 signalness,
-                t_event
+                t_event,
+                morphology_id
             )
             events.append(event)
         

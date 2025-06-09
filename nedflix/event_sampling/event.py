@@ -10,3 +10,4 @@ class Event:
     reco_energy: float
     signalness: float
     time: float
+    morphology: int
