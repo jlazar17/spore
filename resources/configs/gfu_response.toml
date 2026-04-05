@@ -1,0 +1,36 @@
+# IceCube GFU (Gamma-ray Follow-Up) detector response
+#
+# No official data release exists for GFU; the effective area is digitized
+# from published figures and the PSF is modelled analytically.
+#
+# PSF model: Rayleigh distribution with a power-law energy dependence.
+#
+#   median_PSF(E) = amplitude_deg * (E / pivot_gev)^{-index}
+#   sigma_R(E)    = median_PSF(E) / sqrt(ln 2)     [Rayleigh scale]
+#   psi           ~ Rayleigh(sigma_R)               [sampled opening angle]
+
+[meta]
+name   = "IceCube GFU"
+sample = "GFU"
+
+# ---------------------------------------------------------------------------
+# Track morphology (muon neutrinos via charged-current interactions)
+# ---------------------------------------------------------------------------
+
+[track.effective_area]
+# Path to the CSV file, relative to this TOML.
+# CSV columns: log10_e_gev  sindec_min  sindec_max  aeff_cm2
+# Multiple rows with the same log10_e_gev but different sindec bands are
+# allowed; a 2-D interpolator over (log10_e_gev, sindec) is built.
+# If all rows share the same sindec band, a 1-D interpolator is used instead.
+file = "gfu_effective_area.csv"
+
+[track.psf]
+form          = "rayleigh_power_law"
+amplitude_deg = 1.0      # median PSF at the pivot energy
+pivot_gev     = 1000.0   # pivot energy in GeV (1 TeV)
+index         = 0.5      # median PSF ~ E^{-index}
+
+# [track.energy_resolution]
+# form         = "log_gaussian"
+# sigma_log10e = 0.3

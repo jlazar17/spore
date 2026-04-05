@@ -1,0 +1,13 @@
+# IceCube detector — properties + response reference.
+#
+# Load with:
+#   det = Detector.from_toml("resources/configs/icecube_properties.toml")
+
+[properties]
+latitude  = -90.0   # degrees (South Pole)
+longitude =   0.0   # degrees
+medium    = "Ice"
+
+[response]
+# Path resolved relative to this file first, then CWD, then absolute.
+toml = "ps10yr_response.toml"

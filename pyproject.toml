@@ -1,9 +1,22 @@
 [tool.poetry]
-name = "nedflix"
+name = "spore"
 version = "0.1.0"
-description = ""
-authors = ["Jeffrey Lazar <jeff.p.lazar@gmail.com>"]
+description = "Sampling Pipeline for Observatory Response Estimation — multi-detector neutrino point source simulation"
+authors = [
+    "Jeffrey Lazar <jeff.p.lazar@gmail.com>",
+    "Gwen de Wasseige",
+    "Perrine Wilmet",
+]
+license = "LGPL-3.0-or-later"
 readme = "README.md"
+repository = "https://github.com/jlazar17/spore"
+homepage = "https://github.com/jlazar17/spore"
+keywords = ["neutrino", "astroparticle", "multimessenger", "simulation", "IceCube"]
+classifiers = [
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Intended Audience :: Science/Research",
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -15,9 +28,16 @@ matplotlib = "^3.9.1"
 ipykernel = "^6.29.5"
 astropy = "^6.1.2"
 pytoml = "^0.1.21"
+pint = "^0.25"
 jupyter = "^1.1.1"
 jupyterlab = "^4.4.2"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
