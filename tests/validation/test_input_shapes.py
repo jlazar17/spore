@@ -4,7 +4,7 @@ import pytest
 from spore.physics import Neutrino, neutrinos
 from spore.source.flux.distributions.power_laws import PowerLaw
 from spore.source.flux.flux import Flux
-from spore.conventions.units import units
+from spore.conventions import ureg
 
 
 class TestFluxDictShapes:

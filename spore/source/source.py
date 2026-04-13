@@ -18,5 +18,5 @@ class Source(ABC):
         """The neutrino flux model for this source."""
         return self._flux
 
-    def __call__(self, nu: Neutrino, e: float, dec: float=None):
-        return self.flux(nu, e, dec)
+    def __call__(self, nu: Neutrino, e: float, dec: float = None, ra: float = None):
+        return self.flux(nu, e, dec, ra)

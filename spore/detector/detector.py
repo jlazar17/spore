@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict
 
-from ..conventions import EarthCoordinate, units
+from ..conventions import EarthCoordinate
 from .detector_response import DetectorResponse
 
 class Medium(Enum):

@@ -10,16 +10,16 @@ from ..conventions import SkyCoordinate, ureg
 class Event:
     """A single sampled neutrino event with true and reconstructed quantities.
 
-    Energies are stored as pint Quantities in eV; bare floats are converted
+    Energies are stored as pint Quantities in GeV; bare floats are converted
     automatically. Angular error is stored in radians.
 
     Attributes:
         true_direction: True neutrino arrival direction.
         reco_direction: Reconstructed arrival direction after PSF smearing.
-        true_energy: True neutrino energy (eV).
-        reco_energy: Reconstructed deposited energy (eV).
+        true_energy: True neutrino energy (GeV).
+        reco_energy: Reconstructed deposited energy (GeV).
         time: Event time in modified Julian days.
-        morphology: Event morphology code (1 = cascade, 2 = track).
+        morphology: Event morphology name (e.g. "track", "cascade").
         detector_id: Identifier of the detector that recorded the event.
             Empty string for single-detector samplers.
         ang_err: Per-event angular uncertainty (radians).
@@ -29,15 +29,15 @@ class Event:
     true_energy: Union[float, pint.Quantity]
     reco_energy: Union[float, pint.Quantity]
     time: float
-    morphology: int
-    detector_id: str = ""
+    morphology: str
+    detector_id: Union[str, int] = ""
     ang_err: Union[float, pint.Quantity] = 0.0
 
     def __post_init__(self):
         if not isinstance(self.true_energy, pint.Quantity):
-            self.true_energy = ureg.Quantity(self.true_energy, "eV")
+            self.true_energy = ureg.Quantity(self.true_energy, "GeV")
         if not isinstance(self.reco_energy, pint.Quantity):
-            self.reco_energy = ureg.Quantity(self.reco_energy, "eV")
+            self.reco_energy = ureg.Quantity(self.reco_energy, "GeV")
         if not isinstance(self.ang_err, pint.Quantity):
             self.ang_err = ureg.Quantity(self.ang_err, "rad")
 

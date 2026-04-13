@@ -4,8 +4,6 @@ import numpy as np
 from scipy.interpolate import CubicSpline, RegularGridInterpolator
 from scipy.integrate import quad
 
-from . import units
-
 def parse_2d_file(location: str):
     """Load a 2D (energy × declination) flux table from an HDF5 file.
 
@@ -19,7 +17,7 @@ def parse_2d_file(location: str):
         Tuple (norms, spls, decmin, decmax, emin, emax) where norms is an
         array of per-species flux normalizations, spls is a list of
         RegularGridInterpolator objects in (sin(dec), log(E)) space,
-        and the remaining four values give the grid extent in radians and eV.
+        and the remaining four values give the grid extent in radians and GeV.
 
     Raises:
         ValueError: If the energy or declination grid is not uniformly spaced
@@ -29,9 +27,9 @@ def parse_2d_file(location: str):
     with h5.File(filename) as h5f:
         gp = h5f[groupname]
         sindecs = gp["sindecs"][:]
-        es = gp["energies"][:] * units.GeV
-        fluxes = gp["fluxes"][:] / units.GeV / units.cm**2 / units.sec
-    
+        es = gp["energies"][:]   # GeV
+        fluxes = gp["fluxes"][:]  # GeV⁻¹ cm⁻² s⁻¹
+
     # Verify equal spacing where expected. Not sure if this is necessary
     # But I didn't test it with other stuff
     dfsd = np.diff(sindecs)
@@ -78,6 +76,75 @@ def parse_2d_file(location: str):
 
     return norms, spls, np.arcsin(sindecs.min()), np.arcsin(sindecs.max()), es.min(), es.max()
 
+def parse_3d_file(location: str):
+    """Load a 3D (energy × declination × RA) flux table from an HDF5 file.
+
+    The HDF5 group must contain datasets ``sindecs``, ``ras``, ``energies``
+    (GeV), and ``fluxes`` of shape (6, n_dec, n_ra, n_e) in
+    GeV^{-1} cm^{-2} s^{-1}.
+
+    Args:
+        location: String of the form ``"filename.h5:groupname"``.
+
+    Returns:
+        Tuple (norms, spls, decmin, decmax, ramin, ramax, emin, emax) where
+        norms is an array of per-species flux normalizations, spls is a list of
+        RegularGridInterpolator objects in (sin(dec), RA, log(E)) space,
+        and the remaining six values give the grid extent in radians and GeV.
+
+    Raises:
+        ValueError: If any grid axis is not uniformly spaced in its natural
+            parameterisation (sin(dec), RA, log(E)).
+    """
+    filename, groupname = location.split(":")
+    with h5.File(filename) as h5f:
+        gp = h5f[groupname]
+        sindecs = gp["sindecs"][:]
+        ras     = gp["ras"][:]
+        es      = gp["energies"][:]   # GeV
+        fluxes  = gp["fluxes"][:]     # shape (6, n_dec, n_ra, n_e)
+
+    dfsd = np.diff(sindecs)
+    dfra = np.diff(ras)
+    dfle = np.diff(np.log(es))
+    if not np.all(np.isclose(dfsd, dfsd[0])):
+        raise ValueError("sindecs must be uniformly spaced")
+    if not np.all(np.isclose(dfra, dfra[0])):
+        raise ValueError("ras must be uniformly spaced")
+    if not np.all(np.isclose(dfle, dfle[0])):
+        raise ValueError("log(energies) must be uniformly spaced")
+
+    log_es = np.log(es)
+    norms  = np.zeros(6)
+    spls   = []
+    for idx in range(6):
+        flx3d = fluxes[idx]  # shape (n_dec, n_ra, n_e)
+
+        if np.all(flx3d == 0):
+            spls.append(lambda x: 0.0)
+            continue
+
+        # Normalisation: integrate E * flux over log(E) and solid angle.
+        oned_ints = np.trapezoid(es * flx3d, log_es, axis=2)  # (n_dec, n_ra)
+        twod_ints = np.trapezoid(oned_ints,  ras,     axis=1)  # (n_dec,)
+        spl_dec   = CubicSpline(sindecs, twod_ints)
+        val, err  = quad(spl_dec, -1, 1)
+        if val == 0:
+            spls.append(lambda x: 0.0)
+            continue
+        norm = val
+        norms[idx] = norm
+
+        floor = flx3d[flx3d > 0].min() * 1e-6 if np.any(flx3d > 0) else 1.0
+        log_flx_norm = np.log(np.maximum(flx3d / norm, floor))
+
+        spls.append(RegularGridInterpolator(
+            (sindecs, ras, log_es), log_flx_norm, method="pchip"
+        ))
+
+    return norms, spls, np.arcsin(sindecs.min()), np.arcsin(sindecs.max()), ras.min(), ras.max(), es.min(), es.max()
+
+
 def parse_1d_file(location: str):
     """Load a 1D (energy-only) flux table from an HDF5 file.
 
@@ -90,7 +157,7 @@ def parse_1d_file(location: str):
     Returns:
         Tuple (norms, spls, emin, emax) where norms is an array of per-species
         flux normalizations, spls is a list of CubicSpline objects in log(E)
-        space, and emin/emax give the grid extent in eV.
+        space, and emin/emax give the grid extent in GeV.
 
     Raises:
         ValueError: If the energy grid is not uniformly spaced in log(E).
@@ -98,8 +165,8 @@ def parse_1d_file(location: str):
     filename, groupname = location.split(":")
     with h5.File(filename) as h5f:
         gp = h5f[groupname]
-        es = gp["energies"][:] * units.GeV
-        fluxes = gp["fluxes"][:, :] / units.GeV / units.cm**2 / units.sec
+        es = gp["energies"][:]      # GeV
+        fluxes = gp["fluxes"][:, :]  # GeV⁻¹ cm⁻² s⁻¹
 
     dfle = np.diff(np.log(es))
     if not np.all(np.isclose(dfle, dfle[0])):

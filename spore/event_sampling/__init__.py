@@ -1,5 +1,4 @@
 from .point_source_event_sampler import PointSourceEventSampler
 from .extended_source_event_sampler import ExtendedSourceEventSampler
-from .multi_detector_point_source_sampler import MultiDetectorPointSourceSampler
-from .galactic_halo_event_sampler import GalacticHaloEventSampler
+from .multi_detector_sampler import MultiDetectorSampler
 from .io import write_events, read_events, list_groups

@@ -11,19 +11,18 @@ Run from the project root:
     python examples/extended_source_transient.py
 """
 
-import os
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from spore.conventions import units
+from spore.conventions import ureg
 from spore.detector import Detector
 from spore.source import ExtendedSource
 from spore.event_sampling import ExtendedSourceEventSampler
 
 RESOURCES = Path(__file__).parent.parent / "resources"
-RESPONSE  = str(RESOURCES / "example_detector_response.h5")
+RESPONSE  = str(RESOURCES / "icecube_10yr_response.h5")
 FLUX_FILE = str(Path(__file__).parent / "_transient_flux.h5")
 
 # ---------------------------------------------------------------------------
@@ -56,7 +55,7 @@ with h5py.File(FLUX_FILE, "w") as f:
     grp.create_dataset("fluxes",   data=fluxes)
 
 # ---------------------------------------------------------------------------
-# Detector: Mediterranean (KM3NeT ARCA-like)
+# Detector: Mediterranean
 # ---------------------------------------------------------------------------
 det = Detector.from_config({
     "properties": {
@@ -73,30 +72,28 @@ det = Detector.from_config({
 src = ExtendedSource.from_config({"flux": {"location": f"{FLUX_FILE}:flux"}})
 
 # ---------------------------------------------------------------------------
-# Transient sampler: deltat=None means geometry fixed at t0.
+# Transient sampler: no n_time_samples means geometry is fixed at t0.
 # t0 is set internally to MJD 51544 (J2000).  A flare at this epoch means
 # the Galactic Centre is at a specific azimuth and the A_eff reflects the
 # actual detector pointing at that instant.
 # ---------------------------------------------------------------------------
 print("Building sampler (transient mode — geometry fixed at t0)...")
-sampler = ExtendedSourceEventSampler(det, src, burnin=5_000, deltat=None)
+sampler = ExtendedSourceEventSampler(det, src)
 
-# 6-hour observation window
-T_FLARE = 6 * 3600 * units.sec
 N_EVENTS = 500
 
 print(f"Sampling {N_EVENTS} track events over a 6-hour flare...")
-events = sampler.sample_events("track", nevent=N_EVENTS, oversample=5)
+events = sampler.sample_events("track", nevent=N_EVENTS)
 print(f"  Got {len(events)} events")
 
 # ---------------------------------------------------------------------------
 # Plot
 # ---------------------------------------------------------------------------
-true_decs  = np.degrees([e.true_direction.declination  for e in events])
-reco_decs  = np.degrees([e.reco_direction.declination  for e in events])
-true_ras   = np.degrees([e.true_direction.right_ascension for e in events])
-reco_ras   = np.degrees([e.reco_direction.right_ascension for e in events])
-log10e     = [np.log10(e.reco_energy / units.GeV) for e in events]
+true_decs = np.degrees([e.true_direction.declination     for e in events])
+reco_decs = np.degrees([e.reco_direction.declination     for e in events])
+true_ras  = np.degrees([e.true_direction.right_ascension for e in events])
+reco_ras  = np.degrees([e.reco_direction.right_ascension for e in events])
+log10e    = [np.log10(e.reco_energy.to("GeV").magnitude) for e in events]
 
 fig, axes = plt.subplots(1, 2, figsize=(11, 4))
 fig.suptitle("Extended source — transient mode (6-hour flare, Mediterranean detector)")

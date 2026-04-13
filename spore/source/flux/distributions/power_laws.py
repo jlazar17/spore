@@ -3,7 +3,6 @@ import numpy as np
 from typing import Dict, Optional
 
 from .distribution import Distribution
-from .. import units
 
 class PowerLaw(Distribution):
     """Normalised power-law spectral distribution E^{-gamma}.
@@ -13,9 +12,9 @@ class PowerLaw(Distribution):
 
     Args:
         gamma: Spectral index. Must be positive.
-        emin: Minimum energy in eV.
-        emax: Maximum energy in eV.
-        pivot: Pivot energy in eV.
+        emin: Minimum energy in GeV.
+        emax: Maximum energy in GeV.
+        pivot: Pivot energy in GeV.
     """
 
     def __init__(self, gamma: float, emin: float, emax: float, pivot: float):
@@ -34,15 +33,15 @@ class PowerLaw(Distribution):
         """Spectral index of the power law."""
         return self._gamma
 
-    def density(self, e: float, dec: float = None) -> float:
+    def density(self, e: float, dec: float = None, ra: float = None) -> float:
         """Evaluate the normalised power-law density at energy e.
 
         Args:
-            e: Energy in eV. May be a scalar or numpy array.
+            e: Energy in GeV. May be a scalar or numpy array.
             dec: Ignored; accepted for interface compatibility.
 
         Returns:
-            Normalised spectral density in eV^{-1}.
+            Normalised spectral density in GeV^{-1}.
 
         Raises:
             ValueError: If e is outside [emin, emax].
@@ -77,8 +76,8 @@ class PowerLaw(Distribution):
             A configured PowerLaw instance.
         """
         gamma = config["gamma"]
-        emin = config["emin"] * units.GeV
-        emax = config["emax"] * units.GeV
-        pivot = config["pivot"] * units.GeV
+        emin  = config["emin"]
+        emax  = config["emax"]
+        pivot = config["pivot"]
         distribution = cls(gamma, emin, emax, pivot)
         return distribution

@@ -35,10 +35,9 @@ _FLOAT_COLS = (
     "true_dec", "true_ra",
     "reco_dec", "reco_ra",
     "true_energy", "reco_energy",
-    "time",
+    "time", "ang_err",
 )
-_INT_COLS = ("morphology",)
-_STR_COLS = ("detector_id",)
+_STR_COLS = ("morphology", "detector_id")
 
 
 def write_events(events, path: str, group: str = "events", mode: str = "a") -> None:
@@ -76,15 +75,13 @@ def write_events(events, path: str, group: str = "events", mode: str = "a") -> N
 
         for col in _FLOAT_COLS:
             gp.create_dataset(col, data=np.array([r[col] for r in rows], dtype=np.float64))
-        for col in _INT_COLS:
-            gp.create_dataset(col, data=np.array([r[col] for r in rows], dtype=np.int32))
-        # Variable-length strings
         dt = h5.string_dtype()
-        gp.create_dataset(
-            "detector_id",
-            data=np.array([r["detector_id"] for r in rows], dtype=object),
-            dtype=dt,
-        )
+        for col in _STR_COLS:
+            gp.create_dataset(
+                col,
+                data=np.array([str(r[col]) for r in rows], dtype=object),
+                dtype=dt,
+            )
 
 
 def list_groups(path: str):
@@ -114,28 +111,37 @@ def read_events(path: str, group: str = "events"):
         if n == 0:
             return []
 
-        true_decs    = gp["true_dec"][:]
-        true_ras     = gp["true_ra"][:]
-        reco_decs    = gp["reco_dec"][:]
-        reco_ras     = gp["reco_ra"][:]
+        true_decs     = gp["true_dec"][:]
+        true_ras      = gp["true_ra"][:]
+        reco_decs     = gp["reco_dec"][:]
+        reco_ras      = gp["reco_ra"][:]
         true_energies = gp["true_energy"][:]
         reco_energies = gp["reco_energy"][:]
         times         = gp["time"][:]
+        ang_errs      = gp["ang_err"][:] if "ang_err" in gp else np.zeros(n)
         morphologies  = gp["morphology"][:]
         detector_ids  = gp["detector_id"][:]
 
+    def _decode(v):
+        return v.decode() if isinstance(v, bytes) else str(v)
+
+    def _decode_id(v):
+        s = v.decode() if isinstance(v, bytes) else str(v)
+        try:
+            return int(s)
+        except ValueError:
+            return s
+
     events = []
     for i in range(n):
-        det_id = detector_ids[i]
-        if isinstance(det_id, bytes):
-            det_id = det_id.decode()
         events.append(Event(
             true_direction=SkyCoordinate(float(true_decs[i]), float(true_ras[i])),
             reco_direction=SkyCoordinate(float(reco_decs[i]), float(reco_ras[i])),
             true_energy=float(true_energies[i]),
             reco_energy=float(reco_energies[i]),
             time=float(times[i]),
-            morphology=int(morphologies[i]),
-            detector_id=det_id,
+            morphology=_decode(morphologies[i]),
+            detector_id=_decode_id(detector_ids[i]),
+            ang_err=float(ang_errs[i]),
         ))
     return events

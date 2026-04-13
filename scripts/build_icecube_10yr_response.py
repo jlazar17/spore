@@ -386,7 +386,7 @@ def _build_energy_resolution(
 
 def _write_hdf5(
     output_path: str,
-    energies_eV: np.ndarray,
+    energies_gev: np.ndarray,
     zeniths: np.ndarray,
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
@@ -405,25 +405,22 @@ def _write_hdf5(
             "all-sky-point-source-icecube-data-years-2008-2018/"
         )
 
-        for name, aeff in [
-            ("track_effective_area",   track_aeff),
-            ("cascade_effective_area", cascade_aeff),
-        ]:
-            g = f.create_group(name)
-            g.create_dataset("energies",         data=energies_eV)
+        for morph, aeff in [("track", track_aeff), ("cascade", cascade_aeff)]:
+            mg = f.create_group(morph)
+
+            g = mg.create_group("effective_area")
+            g.create_dataset("energies",         data=energies_gev)
             g.create_dataset("zeniths",          data=zeniths)
             g.create_dataset("tabulated_values", data=aeff)
             g.create_dataset("lower_bounds",     data=lower_bounds)
             g.create_dataset("upper_bounds",     data=upper_bounds)
 
-        for name in ["track_angular_response", "cascade_angular_response"]:
-            g = f.create_group(name)
+            g = mg.create_group("angular_response")
             g.create_dataset("energies",  data=energies_eV)
             g.create_dataset("us",        data=us_ang)
             g.create_dataset("inv_cdfs",  data=inv_cdfs_ang)
 
-        for name in ["track_energy_resolution", "cascade_energy_resolution"]:
-            g = f.create_group(name)
+            g = mg.create_group("energy_resolution")
             g.create_dataset("us",      data=us_e)
             g.create_dataset("inv_cdf", data=inv_cdf_e)
 
@@ -459,13 +456,10 @@ def main() -> None:
     # Output grids
     # ------------------------------------------------------------------
     energies_gev = np.logspace(np.log10(EMIN_GEV), np.log10(EMAX_GEV), N_E)
-    energies_eV  = energies_gev * _EV_PER_GEV
     zeniths      = np.linspace(0.0, np.pi, N_ZEN)
 
-    log10_emin   = np.log10(energies_eV[0])
-    log10_emax   = np.log10(energies_eV[-1])
-    lower_bounds = np.array([[log10_emin]])
-    upper_bounds = np.array([[log10_emax]])
+    lower_bounds = np.array([[np.log10(energies_gev[0])]])
+    upper_bounds = np.array([[np.log10(energies_gev[-1])]])
 
     # ------------------------------------------------------------------
     # Effective area
@@ -503,7 +497,7 @@ def main() -> None:
     print(f"\nWriting {OUT_FILE} ...")
     _write_hdf5(
         output_path  = OUT_FILE,
-        energies_eV  = energies_eV,
+        energies_gev = energies_gev,
         zeniths      = zeniths,
         lower_bounds = lower_bounds,
         upper_bounds = upper_bounds,
@@ -520,7 +514,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     print("\nSanity check:")
     print(
-        f"  Energy grid:  {energies_eV[0]:.2e} – {energies_eV[-1]:.2e} eV  "
+        f"  Energy grid:  {energies_gev[0]:.2e} – {energies_gev[-1]:.2e} GeV  "
         f"({N_E} points)"
     )
     print(

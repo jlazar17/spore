@@ -5,7 +5,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 from .distribution import Distribution
 
-class UserProvidedDist2D(Distribution):
+class TabulatedEnergyDecFlux(Distribution):
     """Energy and declination spectral distribution backed by a user-provided interpolator.
 
     Intended for tabulated fluxes that vary with both energy and sky position,
@@ -13,8 +13,8 @@ class UserProvidedDist2D(Distribution):
     (sin(dec), log(energy)) space with log-density output.
 
     Args:
-        emin: Minimum energy in eV.
-        emax: Maximum energy in eV.
+        emin: Minimum energy in GeV.
+        emax: Maximum energy in GeV.
         decmin: Minimum declination in radians.
         decmax: Maximum declination in radians.
         spl: RegularGridInterpolator over (sin(dec), log(energy)) returning
@@ -36,7 +36,7 @@ class UserProvidedDist2D(Distribution):
         """Maximum declination of the distribution in radians."""
         return self._decmax
 
-    def density(self, e: float, dec: float) -> float:
+    def density(self, e: float, dec: float = None, ra: float = None) -> float:
         """Evaluate the spectral density at energy e and declination dec.
 
         Args:
@@ -65,6 +65,6 @@ class UserProvidedDist2D(Distribution):
         return float(result[0]) if scalar else result
 
     @classmethod
-    def from_file(cls, filename: str) -> 'UserProvidedDist2D':
+    def from_file(cls, filename: str) -> 'TabulatedEnergyDecFlux':
         """Not implemented. Use Flux.from_config with an HDF5 location string."""
         raise ValueError("Not implemented")

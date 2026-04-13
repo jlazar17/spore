@@ -1,12 +1,16 @@
+import logging
 import numpy as np
 import h5py as h5
+
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass, field
 from typing import Tuple, Callable, Dict, List, Optional
 from scipy.interpolate import RegularGridInterpolator, PchipInterpolator
 
-from .. import units
 from .. import Neutrino
+from ...conventions import ureg
+from ...physics import Morphology
 
 # Seasons that have a dedicated IceCube data-release smearing file.
 # All other IC86 seasons reuse IC86_II.
@@ -25,7 +29,7 @@ class DetectorResponse:
     Each IRF is stored as a dictionary keyed by morphology string
     ("track" or "cascade"). Values are callables:
 
-    - effective_area[m](zen, e)  → effective area in eV^{-2}
+    - effective_area[m](zen, e)  → effective area in cm²
     - angular_response[m](e, u)  → deflection angle in radians for quantile u
     - energy_response[m](u)      → ln(E_reco/E_true) for quantile u
 
@@ -44,93 +48,106 @@ class DetectorResponse:
 
     @property
     def available_morphologies(self):
-        """Morphologies ("track", "cascade") for which a full response is loaded."""
-        return [m for m in ("track", "cascade") if m in self.effective_area]
+        """Morphology names for which a full response is loaded."""
+        return list(self.effective_area.keys())
 
     @classmethod
-    def from_config(cls, config: Dict) -> 'DetectorResponse':
+    def from_config(cls, config: Dict, trim_isolated: bool = True) -> 'DetectorResponse':
         """Build a DetectorResponse from a config dictionary.
 
-        Loads IRFs from an HDF5 file. The file must contain at least one of
-        ``track_effective_area`` or ``cascade_effective_area``, plus a
-        corresponding angular response or joint smearing group.
+        Loads IRFs from an HDF5 file. The file must use the hierarchical
+        format: top-level groups named after registered morphologies (e.g.
+        ``track``, ``cascade``), each containing an ``effective_area``
+        subgroup and optionally ``angular_response``, ``energy_resolution``,
+        and ``smearing`` subgroups.
 
         Args:
             config: Dictionary with either a ``detector_response_file`` key
                 pointing to an HDF5 path, or a ``detector_response_toml``
                 key pointing to a response TOML file.
+            trim_isolated: If True (default), zero out energy bins outside the
+                largest contiguous non-zero run per zenith column when loading
+                the effective area.  This removes isolated low-statistics bins
+                at the edges of the sensitivity range.  Pass False to load the
+                raw tabulated values as-is.
 
         Returns:
             A configured DetectorResponse instance.
 
         Raises:
             ValueError: If the file contains no usable response for any
-                morphology.
+                registered morphology.
         """
         if "detector_response_toml" in config:
             return cls.from_toml(config["detector_response_toml"])
+
+        effective_area   = {}
+        angular_response = {}
+        energy_response  = {}
+        joint_smearing   = {}
+        registered = sorted(Morphology.registered())
+
         with h5.File(config["detector_response_file"]) as h5f:
-            hdf5_keys = set(h5f.keys())
+            for morph_name in registered:
+                if morph_name not in h5f or not isinstance(h5f[morph_name], h5.Group):
+                    continue
+                grp = h5f[morph_name]
+                if "effective_area" not in grp:
+                    continue
+                effa = (
+                    effa_from_dr_group(grp["effective_area_dr"])
+                    if "effective_area_dr" in grp
+                    else effa_spline_from_group(grp["effective_area"],
+                                                trim_isolated=trim_isolated)
+                )
+                ang    = ang_spline_from_group(grp["angular_response"])      if "angular_response"  in grp else None
+                energy = energy_spline_from_group(grp["energy_resolution"])  if "energy_resolution" in grp else None
+                joint  = smearing_sampler_from_group(grp["smearing"])        if "smearing"          in grp else None
+                if ang is None and joint is None:
+                    logger.warning(
+                        "Morphology group '%s' has no angular_response or smearing; "
+                        "reconstructed directions will be NaN.",
+                        morph_name,
+                    )
+                if energy is None:
+                    logger.warning(
+                        "Morphology group '%s' has no energy_resolution; "
+                        "reconstructed energies will be NaN.",
+                        morph_name,
+                    )
+                effective_area[morph_name]   = effa
+                angular_response[morph_name] = ang
+                energy_response[morph_name]  = energy
+                if joint is not None:
+                    joint_smearing[morph_name] = joint
+                logger.debug("Loaded morphology '%s' from HDF5.", morph_name)
 
-            # --- effective area: data-release format takes priority ---
-            if "track_effective_area_dr" in hdf5_keys:
-                track_effa = effa_from_dr_group(h5f["track_effective_area_dr"])
-            elif "track_effective_area" in hdf5_keys:
-                track_effa = effa_spline_from_group(h5f["track_effective_area"])
-            else:
-                track_effa = None
+            unregistered = [
+                k for k, v in h5f.items()
+                if isinstance(v, h5.Group) and "effective_area" in v
+                and k not in registered
+            ]
+            if unregistered:
+                logger.warning(
+                    "HDF5 file contains morphology groups that are not registered "
+                    "and will not be loaded: %s. "
+                    "Call Morphology.register('<name>') before building the "
+                    "DetectorResponse to load them.",
+                    sorted(unregistered),
+                )
 
-            if "cascade_effective_area" in hdf5_keys:
-                cscd_effa = effa_spline_from_group(h5f["cascade_effective_area"])
-            else:
-                cscd_effa = None
-
-            # --- angular / energy responses (old marginal format) ---
-            track_ang    = ang_spline_from_group(h5f["track_angular_response"])     if "track_angular_response"    in hdf5_keys else None
-            cscd_ang     = ang_spline_from_group(h5f["cascade_angular_response"])   if "cascade_angular_response"  in hdf5_keys else None
-            track_energy = energy_spline_from_group(h5f["track_energy_resolution"]) if "track_energy_resolution"   in hdf5_keys else None
-            cscd_energy  = energy_spline_from_group(h5f["cascade_energy_resolution"]) if "cascade_energy_resolution" in hdf5_keys else None
-
-            # --- joint smearing (present in files built via from_dataverse) ---
-            joint_smearing = {}
-            if "track_smearing" in hdf5_keys:
-                joint_smearing["track"] = smearing_sampler_from_group(h5f["track_smearing"])
-            if "cascade_smearing" in hdf5_keys:
-                joint_smearing["cascade"] = smearing_sampler_from_group(h5f["cascade_smearing"])
-            if not joint_smearing:
-                joint_smearing = None
-
-        # has_track: need effective area + at least one response source
-        has_track = (track_effa is not None) and (
-            track_ang is not None or (joint_smearing and "track" in joint_smearing)
-        )
-        has_cascade = (cscd_effa is not None) and (
-            cscd_ang is not None or (joint_smearing and "cascade" in joint_smearing)
-        )
-
-        if not has_track and not has_cascade:
+        if not effective_area:
             raise ValueError(
                 "Detector response file contains no usable response. "
-                "Need effective area + angular response (or joint smearing) "
-                "for at least one morphology."
+                "Need at least an effective area for one registered morphology."
             )
 
-        # I know this is psycho. Don't @ me
-        effective_area = {}
-        angular_response = {}
-        energy_response = {}
-
-        if has_track:
-            effective_area["track"] = track_effa
-            angular_response["track"] = track_ang
-            energy_response["track"] = track_energy
-
-        if has_cascade:
-            effective_area["cascade"] = cscd_effa
-            angular_response["cascade"] = cscd_ang
-            energy_response["cascade"] = cscd_energy
-
-        return cls(effective_area, angular_response, energy_response, joint_smearing)
+        return cls(
+            effective_area,
+            angular_response,
+            energy_response,
+            joint_smearing if joint_smearing else None,
+        )
 
     @classmethod
     def from_toml(cls, path: str) -> 'DetectorResponse':
@@ -172,14 +189,16 @@ class DetectorResponse:
         with open(path, "rb") as fh:
             cfg = tomllib.load(fh)
 
-        _MORPHOLOGIES = ("track", "cascade")
-        has_morph_keys = any(m in cfg for m in _MORPHOLOGIES)
+        # Flat format (backward compat): top-level keys are response sections
+        # directly (effective_area, psf, smearing).  Per-morphology format:
+        # top-level keys are morphology names each containing those sections.
+        _RESPONSE_KEYS = {"effective_area", "psf", "smearing"}
+        is_flat = bool(_RESPONSE_KEYS & set(cfg.keys()))
 
-        if has_morph_keys:
-            morph_configs = {m: cfg[m] for m in _MORPHOLOGIES if m in cfg}
-        else:
-            # Backward compat: flat config → track only
+        if is_flat:
             morph_configs = {"track": cfg}
+        else:
+            morph_configs = {k: v for k, v in cfg.items() if isinstance(v, dict)}
 
         effective_area   = {}
         angular_response = {}
@@ -309,12 +328,12 @@ class DetectorResponse:
                 aeff_sum += aeff_cm2
             n_aeff += 1
 
-        aeff_eV2 = (aeff_sum / n_aeff) * units.cm ** 2
+        aeff_cm2 = aeff_sum / n_aeff
 
         aeff_data = {
             'log10e_centers': log10e_centers,
             'sindec_centers': sindec_centers,
-            'aeff_eV2':       aeff_eV2,
+            'aeff_cm2':       aeff_cm2,
         }
 
         # Optionally write to HDF5
@@ -331,7 +350,7 @@ class DetectorResponse:
         joint_smearing = {
             'track': _build_smearing_sampler(smearing_data),
         }
-        track_effa_dr = _build_aeff_callable(log10e_centers, sindec_centers, aeff_eV2)
+        track_effa_dr = _build_aeff_callable(log10e_centers, sindec_centers, aeff_cm2)
 
         # Load base response if provided; replace track A_eff with data-release version
         if base_h5 is not None:
@@ -391,13 +410,12 @@ def _parse_morphology_config(mcfg: dict, toml_dir: str):
             )
             aeff_sum = aeff_cm2.copy() if aeff_sum is None else aeff_sum + aeff_cm2
             n += 1
-        aeff_eV2 = (aeff_sum / n) * units.cm ** 2
-        effa = _build_aeff_callable(log10e_c, sindec_c, aeff_eV2)
+        aeff_cm2_avg = aeff_sum / n
+        effa = _build_aeff_callable(log10e_c, sindec_c, aeff_cm2_avg)
     elif "file" in ea_cfg:
         csv_path = resolve_path(ea_cfg["file"], toml_dir)
         log10e_c, sindec_c, aeff_cm2 = _parse_digitized_aeff_csv(csv_path)
-        aeff_eV2 = aeff_cm2 * units.cm ** 2
-        effa = _build_aeff_callable(log10e_c, sindec_c, aeff_eV2)
+        effa = _build_aeff_callable(log10e_c, sindec_c, aeff_cm2)
     elif ea_cfg:
         raise ValueError(
             "TOML effective_area block must have 'file' or type='dataverse_csv'."
@@ -472,42 +490,100 @@ def _parse_morphology_config(mcfg: dict, toml_dir: str):
 # HDF5 helpers
 # ---------------------------------------------------------------------------
 
-def effa_spline_from_group(gp: h5.Group) -> Callable:
+_CM_IN_EV_INV   = 8065.54815355
+_CM2_IN_EV2_INV = _CM_IN_EV_INV ** 2
+
+
+def effa_spline_from_group(gp: h5.Group, trim_isolated: bool = True):
+    """Load effective area from an HDF5 group.
+
+    Returns a single callable when ``tabulated_values`` has shape (N_E, N_ZEN)
+    (single-species format), or a list of 6 callables when it has shape
+    (6, N_E, N_ZEN) (per-species format).  The per-species format is required
+    for morphologies where different neutrino flavours have significantly
+    different detection efficiencies (e.g. HESE cascade at high energies).
+
+    Parameters
+    ----------
+    gp : h5py.Group
+        HDF5 group containing ``energies``, ``zeniths``, ``tabulated_values``,
+        ``lower_bounds``, and ``upper_bounds`` datasets.
+    trim_isolated : bool
+        If True (default), zero out energy bins outside the largest contiguous
+        non-zero run per zenith column before building the interpolator.  This
+        removes isolated low-statistics bins at the edges of the sensitivity
+        range.  Pass False to use the raw tabulated values as-is.
+    """
     from .utils import effa_helper
-    zens = gp["zeniths"]
-    es = gp["energies"]
-    tabulated_values = gp["tabulated_values"]
-    lower_bounds = gp["lower_bounds"]
-    upper_bounds = gp["upper_bounds"]
-    effa_fxn = effa_helper(zens[:], es[:], tabulated_values[:], lower_bounds[:], upper_bounds[:])
-    return effa_fxn
+    zens = gp["zeniths"][:]
+    es = gp["energies"][:]  # stored in GeV
+    # stored in eV^{-2}; convert to cm^2 so the sampler norm integrates to events/s
+    tabulated_raw = gp["tabulated_values"][:]
+    lower_bounds = gp["lower_bounds"][:]
+    upper_bounds = gp["upper_bounds"][:]
+
+    def _zero_fn(zen, e):
+        scalar = np.ndim(zen) == 0
+        out = np.zeros(np.atleast_1d(np.asarray(zen)).shape)
+        return float(out[0]) if scalar else out
+
+    if tabulated_raw.ndim == 3:  # per-species: shape (6, N_E, N_ZEN)
+        fns = []
+        for idx in range(6):
+            vals = tabulated_raw[idx] / _CM2_IN_EV2_INV
+            if np.all(vals == 0):
+                fns.append(_zero_fn)
+            else:
+                fns.append(effa_helper(zens, es, vals, lower_bounds, upper_bounds,
+                                       trim_isolated=trim_isolated))
+        return fns
+    else:  # 2-D: shape (N_E, N_ZEN)
+        vals = tabulated_raw / _CM2_IN_EV2_INV
+        if np.all(vals == 0):
+            return _zero_fn
+        return effa_helper(zens, es, vals, lower_bounds, upper_bounds,
+                           trim_isolated=trim_isolated)
 
 def ang_spline_from_group(gp: h5.Group) -> Callable:
     # PCHIP is monotone-preserving in each dimension, which matters for the
     # u-axis (CDF quantile): linear interpolation is monotone but O(h^2)
     # inaccurate; cubic splines can oscillate.  PCHIP gives smooth, accurate
     # angular smearing without ringing.
+    #
+    # Both axes are clamped to the stored grid range to prevent PCHIP from
+    # extrapolating.  Out-of-range quantiles map to the boundary angle value;
+    # out-of-range energies map to the nearest stored energy's PSF.
     i = RegularGridInterpolator(
-        (np.log(gp["energies"][:]), gp["us"][:]),
+        (np.log(gp["energies"][:]), gp["us"][:]),  # energies stored in GeV
         gp["inv_cdfs"][:],
         method="pchip",
     )
     e_log_min = float(i.grid[0][0])
     e_log_max = float(i.grid[0][-1])
+    u_min = float(i.grid[1][0])
+    u_max = float(i.grid[1][-1])
 
-    def fxn(e, u, umax):
-        if u > umax:
-            u = umax
+    def fxn(e, u):
         log_e = float(np.clip(np.log(e), e_log_min, e_log_max))
-        return float(i((log_e, u)))
-    return lambda e, u: fxn(e, u, i.grid[1].max())
+        u_c   = float(np.clip(u, u_min, u_max))
+        return float(i((log_e, u_c)))
+    return fxn
 
 def energy_spline_from_group(gp: h5.Group) -> Callable:
     # PchipInterpolator is monotone-preserving, which is a correctness
     # requirement for an inverse-CDF sampler: a non-monotone inv-CDF would
     # map quantiles to wrong energies.  linear interp1d is monotone but
     # inaccurate; natural cubic splines can be non-monotone between nodes.
-    return PchipInterpolator(gp["us"][:], gp["inv_cdf"][:])
+    #
+    # Clamp inputs to the stored quantile range to prevent PCHIP from
+    # extrapolating beyond the data.  For tracks the left tail of
+    # Delta = ln(E_reco/E_true) is steep; unclamped extrapolation to
+    # quantiles below the stored minimum produces very large negative Delta
+    # values, sending reco energies to near zero.
+    us = gp["us"][:]
+    spl = PchipInterpolator(us, gp["inv_cdf"][:])
+    u_min, u_max = float(us[0]), float(us[-1])
+    return lambda u: spl(np.clip(u, u_min, u_max))
 
 def smearing_sampler_from_group(gp: h5.Group) -> Callable:
     """
@@ -635,7 +711,7 @@ def _parse_aeff_csv(path: str):
 def _build_aeff_callable(
     log10e_centers: np.ndarray,
     sindec_centers: np.ndarray,
-    aeff_eV2: np.ndarray,
+    aeff_cm2: np.ndarray,
 ) -> Callable:
     """
     Build a track effective-area callable from a (log10E, sin_dec) grid.
@@ -650,15 +726,15 @@ def _build_aeff_callable(
     ----------
     log10e_centers : (n_e,)    log10(E / GeV)
     sindec_centers : (n_dec,)  sin(declination)
-    aeff_eV2       : (n_e, n_dec)  effective area in spore eV^{-2}
+    aeff_cm2       : (n_e, n_dec)  effective area in cm²
 
     Returns
     -------
-    Callable with signature effa(zenith_rad, energy_eV) -> float [eV^{-2}]
+    Callable with signature effa(zenith_rad, energy_GeV) -> float [cm²]
     """
-    nonzero = aeff_eV2[aeff_eV2 > 0]
+    nonzero = aeff_cm2[aeff_cm2 > 0]
     floor = nonzero.min() * 1e-6 if nonzero.size > 0 else 1.0
-    log_aeff = np.log(np.where(aeff_eV2 > 0, aeff_eV2, floor))
+    log_aeff = np.log(np.where(aeff_cm2 > 0, aeff_cm2, floor))
 
     threshold = floor * 10
 
@@ -668,10 +744,10 @@ def _build_aeff_callable(
         from scipy.interpolate import PchipInterpolator as _Pchip
         _e_interp = _Pchip(log10e_centers, log_aeff[:, 0], extrapolate=False)
 
-        def effa(zen_rad, e_eV):
-            scalar = np.ndim(e_eV) == 0
-            e_eV = np.atleast_1d(np.asarray(e_eV, dtype=float))
-            log10e = np.log10(e_eV / units.GeV)
+        def effa(zen_rad, e_GeV):
+            scalar = np.ndim(e_GeV) == 0
+            e_GeV = np.atleast_1d(np.asarray(e_GeV, dtype=float))
+            log10e = np.log10(e_GeV)
             v = _e_interp(log10e)
             vals = np.where(np.isnan(v), 0.0, np.exp(v))
             vals = np.where(vals > threshold, vals, 0.0)
@@ -693,11 +769,11 @@ def _build_aeff_callable(
     sd_min = float(sindec_centers[0])
     sd_max = float(sindec_centers[-1])
 
-    def effa(zen_rad, e_eV):
-        scalar = np.ndim(zen_rad) == 0 and np.ndim(e_eV) == 0
+    def effa(zen_rad, e_GeV):
+        scalar = np.ndim(zen_rad) == 0 and np.ndim(e_GeV) == 0
         zen_rad = np.atleast_1d(np.asarray(zen_rad, dtype=float))
-        e_eV    = np.atleast_1d(np.asarray(e_eV,    dtype=float))
-        log10e = np.log10(e_eV / units.GeV)
+        e_GeV   = np.atleast_1d(np.asarray(e_GeV,   dtype=float))
+        log10e = np.log10(e_GeV)
         # South-Pole convention: sin(dec) = -cos(zenith)
         sindec = np.clip(-np.cos(zen_rad), sd_min, sd_max)
         # Broadcast so zen and e can have different lengths (e.g. scalar zen, array e)
@@ -717,7 +793,7 @@ def effa_from_dr_group(gp: h5.Group) -> Callable:
     return _build_aeff_callable(
         gp['log10e_centers'][:],
         gp['sindec_centers'][:],
-        gp['aeff_eV2'][:],
+        gp['aeff_cm2'][:],
     )
 
 
@@ -750,14 +826,13 @@ def _build_rayleigh_power_law_ang_sampler(
 
     Returns
     -------
-    Callable with signature ``ang_sampler(energy_eV, u) -> psi_rad``
+    Callable with signature ``ang_sampler(energy_GeV, u) -> psi_rad``
     where ``u`` is a Uniform(0, 1) variate.
     """
     _sqrt_ln2 = np.sqrt(np.log(2.0))
 
-    def ang_sampler(energy_eV: float, u: float) -> float:
-        e_gev = energy_eV / units.GeV
-        median_deg = amplitude_deg * (e_gev / pivot_gev) ** (-index)
+    def ang_sampler(energy_GeV: float, u: float) -> float:
+        median_deg = amplitude_deg * (energy_GeV / pivot_gev) ** (-index)
         sigma_R_rad = np.radians(median_deg) / _sqrt_ln2
         # Rayleigh inverse CDF: psi = sigma * sqrt(-2 ln(1-u))
         u_clamped = float(np.clip(u, 0.0, 1.0 - 1e-15))
@@ -915,8 +990,8 @@ def _build_smearing_sampler(data: dict) -> Callable:
     -------
     Callable with signature::
 
-        sample(true_energy_eV: float, dec_rad: float)
-            -> (reco_energy_eV: float, psi_rad: float, ang_err_rad: float)
+        sample(true_energy_GeV: float, dec_rad: float, rng=None)
+            -> (reco_energy_GeV: pint.Quantity, psi_rad: float, ang_err_rad: float)
     """
     etrue_edges = data['log10e_true_edges']   # (n_et+1,)
     dec_edges   = data['dec_edges']            # (n_dec+1,)  degrees
@@ -942,9 +1017,11 @@ def _build_smearing_sampler(data: dict) -> Callable:
     )
     cum = np.cumsum(flat_norm, axis=-1)   # (n_et, n_dec, n_er*n_psf*n_ae)
 
-    def sample(true_energy_eV: float, dec_rad: float):
-        from spore.conventions import units as _u
-        log10e_t = np.log10(true_energy_eV / _u.GeV)
+    def sample(true_energy_GeV: float, dec_rad: float, rng=None):
+        rand = rng.random  if rng is not None else np.random.rand
+        unif = rng.uniform if rng is not None else np.random.uniform
+
+        log10e_t = np.log10(true_energy_GeV)
         dec_deg  = np.degrees(dec_rad)
 
         i_et = int(np.clip(
@@ -955,17 +1032,17 @@ def _build_smearing_sampler(data: dict) -> Callable:
         ))
 
         # Inverse-CDF sampling via searchsorted on precomputed cumulative dist
-        idx = int(np.searchsorted(cum[i_et, i_dc], np.random.rand()))
+        idx = int(np.searchsorted(cum[i_et, i_dc], rand()))
         idx = min(idx, n_er * n_psf * n_ae - 1)
         i_er, i_ps, i_ae = np.unravel_index(idx, (n_er, n_psf, n_ae))
 
-        log10e_r = np.random.uniform(er_lo[i_et, i_dc, i_er], er_hi[i_et, i_dc, i_er])
-        reco_energy = (10.0 ** log10e_r) * _u.GeV
+        log10e_r = unif(er_lo[i_et, i_dc, i_er], er_hi[i_et, i_dc, i_er])
+        reco_energy = ureg.Quantity(10.0 ** log10e_r, "GeV")
 
-        psi_deg = np.random.uniform(p_lo[i_et, i_dc, i_ps], p_hi[i_et, i_dc, i_ps])
+        psi_deg = unif(p_lo[i_et, i_dc, i_ps], p_hi[i_et, i_dc, i_ps])
         psi_rad = np.radians(psi_deg)
 
-        ae_deg  = np.random.uniform(ae_lo[i_et, i_dc, i_ae], ae_hi[i_et, i_dc, i_ae])
+        ae_deg  = unif(ae_lo[i_et, i_dc, i_ae], ae_hi[i_et, i_dc, i_ae])
         ae_rad  = np.radians(ae_deg)
 
         return reco_energy, psi_rad, ae_rad

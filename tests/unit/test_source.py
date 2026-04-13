@@ -3,7 +3,6 @@ import pytest
 from scipy.integrate import quad
 
 from spore.conventions import SkyCoordinate
-from spore.conventions.units import units
 from spore.physics import Neutrino, neutrinos
 from spore.source.flux.distributions.power_laws import PowerLaw
 from spore.source.flux.flux import Flux
@@ -12,52 +11,52 @@ from spore.source.point_source import PointSource
 
 class TestPowerLaw:
     def test_density_in_range_is_positive(self):
-        pl = PowerLaw(2.0, 1e11, 1e15, 1e13)
-        assert pl.density(1e13) > 0
+        pl = PowerLaw(2.0, 1e2, 1e6, 1e4)
+        assert pl.density(1e4) > 0
 
     def test_density_below_emin_raises(self):
-        pl = PowerLaw(2.0, 1e11, 1e15, 1e13)
+        pl = PowerLaw(2.0, 1e2, 1e6, 1e4)
         with pytest.raises(ValueError):
-            pl.density(1e10)
+            pl.density(10.0)
 
     def test_density_above_emax_raises(self):
-        pl = PowerLaw(2.0, 1e11, 1e15, 1e13)
+        pl = PowerLaw(2.0, 1e2, 1e6, 1e4)
         with pytest.raises(ValueError):
-            pl.density(1e16)
+            pl.density(1e7)
 
     def test_density_at_emin_boundary_is_valid(self):
-        pl = PowerLaw(2.0, 1e11, 1e15, 1e13)
-        assert pl.density(1e11) > 0
+        pl = PowerLaw(2.0, 1e2, 1e6, 1e4)
+        assert pl.density(1e2) > 0
 
     def test_density_at_emax_boundary_is_valid(self):
-        pl = PowerLaw(2.0, 1e11, 1e15, 1e13)
-        assert pl.density(1e15) > 0
+        pl = PowerLaw(2.0, 1e2, 1e6, 1e4)
+        assert pl.density(1e6) > 0
 
     def test_integrates_to_pivot_gamma(self):
         # PowerLaw.density is NOT a unit-normalized PDF. It integrates to
         # pivot^gamma over [emin, emax]; the Flux normalization absorbs this.
-        emin, emax, pivot, gamma = 1e11, 1e15, 1e13, 2.0
+        emin, emax, pivot, gamma = 1e2, 1e6, 1e4, 2.0
         pl = PowerLaw(gamma, emin, emax, pivot)
         val, _ = quad(pl.density, emin, emax)
         assert val == pytest.approx(pivot**gamma, rel=1e-4)
 
     def test_gamma_one_does_not_raise(self):
-        pl = PowerLaw(1.0, 1e11, 1e15, 1e13)
-        assert pl.density(1e12) > 0
+        pl = PowerLaw(1.0, 1e2, 1e6, 1e4)
+        assert pl.density(1e3) > 0
 
     def test_gamma_one_integrates_to_pivot(self):
-        emin, emax, pivot = 1e11, 1e15, 1e13
+        emin, emax, pivot = 1e2, 1e6, 1e4
         pl = PowerLaw(1.0, emin, emax, pivot)
         val, _ = quad(pl.density, emin, emax)
         assert val == pytest.approx(pivot, rel=1e-4)
 
     def test_emin_emax_stored_correctly(self):
-        pl = PowerLaw(2.0, 1e11, 1e15, 1e13)
-        assert pl.emin == pytest.approx(1e11)
-        assert pl.emax == pytest.approx(1e15)
+        pl = PowerLaw(2.0, 1e2, 1e6, 1e4)
+        assert pl.emin == pytest.approx(1e2)
+        assert pl.emax == pytest.approx(1e6)
 
     def test_gamma_stored_correctly(self):
-        pl = PowerLaw(2.7, 1e11, 1e15, 1e13)
+        pl = PowerLaw(2.7, 1e2, 1e6, 1e4)
         assert pl.gamma == pytest.approx(2.7)
 
 
@@ -88,7 +87,7 @@ class TestFlux:
 
 class TestPointSource:
     def test_call_returns_positive(self, point_source):
-        e = 1e12
+        e = 1e3  # 1 TeV in GeV
         result = point_source(Neutrino.NuMu, e)
         assert result > 0
 
@@ -97,7 +96,7 @@ class TestPointSource:
 
     def test_location_stored_correctly(self):
         from spore.source.flux.distributions.power_laws import PowerLaw
-        pl = PowerLaw(2.0, 1e11, 1e15, 1e13)
+        pl = PowerLaw(2.0, 1e2, 1e6, 1e4)
         normalizations = {nu: 1e-18 for nu in neutrinos}
         distributions = {nu: pl for nu in neutrinos}
         flux = Flux(normalizations, distributions)

@@ -24,7 +24,7 @@ class PointSource(Source):
         """Sky coordinate of the source."""
         return self._location
 
-    def __call__(self, nu: Neutrino, e: float):
+    def __call__(self, nu: Neutrino, e: float, dec: float = None, ra: float = None):
         return self.flux(nu, e)
 
     @classmethod
@@ -52,13 +52,15 @@ class PointSource(Source):
         return cls.from_config(cfg)
 
     @classmethod
-    def from_config(cls, config: Dict) -> 'PointSource':
+    def from_config(cls, config: Dict, normalization: float = 1.0) -> 'PointSource':
         """Build a PointSource from a config dictionary.
 
         Args:
             config: Dictionary with a ``location`` sub-dict (keys:
                 ``declination``, ``right_ascension`` in degrees) and a
                 ``flux`` sub-dict accepted by Flux.from_config.
+            normalization: Global multiplicative scaling applied to the flux.
+                Default 1.0 (no scaling).
 
         Returns:
             A configured PointSource instance.
@@ -67,5 +69,5 @@ class PointSource(Source):
             np.radians(config["location"]["declination"]),
             np.radians(config["location"]["right_ascension"])
         )
-        flux = Flux.from_config(config["flux"])
+        flux = Flux.from_config(config["flux"], normalization=normalization)
         return cls(flux, location)

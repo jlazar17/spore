@@ -1,6 +1,6 @@
 import pytest
 
-from spore.conventions.units import units
+from spore.conventions import ureg
 from spore.physics import neutrinos
 from spore.source.flux.distributions.power_laws import PowerLaw
 from spore.source.flux.flux import Flux
@@ -11,7 +11,7 @@ from spore.event_sampling.extended_source_event_sampler import ExtendedSourceEve
 @pytest.fixture
 def extended_source(powerlaw_dist):
     """Minimal ExtendedSource with a power-law flux independent of declination."""
-    norm = 1e-18 / units.GeV / units.cm**2 / units.sec
+    norm = 1e-18  # GeV⁻¹ cm⁻² s⁻¹
     flux = Flux(
         {nu: norm for nu in neutrinos},
         {nu: powerlaw_dist for nu in neutrinos},

@@ -2,3 +2,27 @@
 **/__pycache__/*
 **/Untitled*.ipynb
 paper/
+_dm_backup/
+.claude/
+
+# Generated figures and notebooks output
+figures/
+examples/*.png
+examples/*.gif
+paper.mplstyle
+
+# Generated/cached HDF5 artifacts
+resources/plotting_data.h5
+resources/example_detector_response_old.h5
+examples/_*.h5
+
+# Data releases (large, not distributed with the package)
+scripts/paper_plots/hese_7yr_data_release/
+scripts/paper_plots/ps10yr_data_release/
+
+# Generated outputs in paper_plots
+scripts/paper_plots/*.pdf
+scripts/paper_plots/*.h5
+
+# Debug scripts
+scripts/debug_atmo_rates.py

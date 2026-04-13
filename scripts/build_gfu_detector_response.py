@@ -156,17 +156,17 @@ def _parse_args(argv=None):
 # ---------------------------------------------------------------------------
 
 def _load_effa_csv(path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Return (energy_eV, aeff_eV2) from a CSV with columns energy_GeV, aeff_m2."""
+    """Return (energy_gev, aeff_eV2) from a CSV with columns energy_GeV, aeff_m2."""
     data = np.loadtxt(path, delimiter=",", comments="#")
-    energy_eV = data[:, 0] * _EV_PER_GEV
+    energy_gev = data[:, 0]
     aeff_eV2 = _m2_to_eV2(data[:, 1])
-    idx = np.argsort(energy_eV)
-    return energy_eV[idx], aeff_eV2[idx]
+    idx = np.argsort(energy_gev)
+    return energy_gev[idx], aeff_eV2[idx]
 
 
 def _build_effa_grid(
     effa_specs: list[tuple[float, np.ndarray, np.ndarray]],
-    energies_eV: np.ndarray,
+    energies_gev: np.ndarray,
     zeniths: np.ndarray,
 ) -> np.ndarray:
     """
@@ -174,15 +174,15 @@ def _build_effa_grid(
 
     Parameters
     ----------
-    effa_specs : list of (dec_rad, energy_eV_array, aeff_eV2_array)
-    energies_eV : 1-D array, shape (n_e,), output energy grid
+    effa_specs : list of (dec_rad, energy_gev_array, aeff_eV2_array)
+    energies_gev : 1-D array, shape (n_e,), output energy grid [GeV]
     zeniths : 1-D array, shape (n_zen,), output zenith grid [radians]
 
     Returns
     -------
     tabulated_values : ndarray, shape (n_e, n_zen)
     """
-    n_e = len(energies_eV)
+    n_e = len(energies_gev)
     n_zen = len(zeniths)
     # Convert zenith to declination for South Pole geometry
     decs = zeniths - np.pi / 2.0    # dec = zen - pi/2
@@ -195,7 +195,7 @@ def _build_effa_grid(
         # Log-linear interpolation; clamp negatives to 0
         log_a = np.where(a_node > 0, np.log(a_node), np.nan)
         interp = PchipInterpolator(np.log(e_node), log_a, extrapolate=False)
-        log_a_grid = interp(np.log(energies_eV))
+        log_a_grid = interp(np.log(energies_gev))
         aeff_at_dec[i] = np.where(np.isfinite(log_a_grid), np.exp(log_a_grid), 0.0)
 
     # Interpolate over declination for each energy bin
@@ -214,7 +214,7 @@ def _build_effa_grid(
     return tabulated
 
 
-def _build_poly_bounds(energies_eV: np.ndarray, zeniths: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _build_poly_bounds(energies_gev: np.ndarray, zeniths: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Build constant polynomial cut bounds covering the full grid.
 
@@ -222,14 +222,14 @@ def _build_poly_bounds(energies_eV: np.ndarray, zeniths: np.ndarray) -> tuple[np
         lower_bounds : shape (n_cuts, n_coeff)  — polynomial in cos(zenith)
         upper_bounds : shape (n_cuts, n_coeff)  — polynomial in cos(zenith)
     Each row is a polynomial evaluated at cos(zenith) that must satisfy:
-        log10(E) >= lower_bound(cos(zen))   and   log10(E) <= upper_bound(cos(zen))
+        log10(E/GeV) >= lower_bound(cos(zen))   and   log10(E/GeV) <= upper_bound(cos(zen))
 
     For the GFU IRF we use a single constant cut (zeroth-order polynomial):
-        lower: log10(emin)
-        upper: log10(emax)
+        lower: log10(emin_gev)
+        upper: log10(emax_gev)
     """
-    log10_emin = np.log10(energies_eV[0])
-    log10_emax = np.log10(energies_eV[-1])
+    log10_emin = np.log10(energies_gev[0])
+    log10_emax = np.log10(energies_gev[-1])
     # Shape: (1, 1) — one cut, degree-0 polynomial (constant)
     lower_bounds = np.array([[log10_emin]])
     upper_bounds = np.array([[log10_emax]])
@@ -247,7 +247,7 @@ def _rayleigh_inv_cdf(u: np.ndarray, sigma_rad: float) -> np.ndarray:
 
 def _build_angular_response(
     psf_path: str | None,
-    energies_eV: np.ndarray,
+    energies_gev: np.ndarray,
     n_u: int,
     psf_floor_deg: float,
     constant_median_deg: float | None = None,
@@ -261,7 +261,7 @@ def _build_angular_response(
     inv_cdfs : ndarray, shape (n_e, n_u)   — angles in radians
     """
     us = np.linspace(0.0, 1.0 - 1e-9, n_u)
-    n_e = len(energies_eV)
+    n_e = len(energies_gev)
 
     if constant_median_deg is not None:
         # Energy-independent PSF (used for cascades)
@@ -275,16 +275,16 @@ def _build_angular_response(
         raise ValueError("Either psf_path or constant_median_deg must be provided.")
 
     data = np.loadtxt(psf_path, delimiter=",", comments="#")
-    e_node_eV = data[:, 0] * _EV_PER_GEV
+    e_node_gev = data[:, 0]
     median_deg = data[:, 1]
 
-    idx = np.argsort(e_node_eV)
-    e_node_eV = e_node_eV[idx]
+    idx = np.argsort(e_node_gev)
+    e_node_gev = e_node_gev[idx]
     median_deg = median_deg[idx]
 
     # Interpolate median angle onto output energy grid
-    interp = PchipInterpolator(np.log(e_node_eV), median_deg, extrapolate=True)
-    median_grid_deg = interp(np.log(energies_eV))
+    interp = PchipInterpolator(np.log(e_node_gev), median_deg, extrapolate=True)
+    median_grid_deg = interp(np.log(energies_gev))
 
     # Apply floor
     median_grid_deg = np.maximum(median_grid_deg, psf_floor_deg)
@@ -354,7 +354,7 @@ def _build_energy_resolution(
 
 def _write_hdf5(
     output_path: str,
-    energies_eV: np.ndarray,
+    energies_gev: np.ndarray,
     zeniths: np.ndarray,
     track_aeff: np.ndarray,
     cascade_aeff: np.ndarray,
@@ -374,7 +374,7 @@ def _write_hdf5(
             ("cascade_effective_area", cascade_aeff),
         ]:
             g = f.create_group(name)
-            g.create_dataset("energies", data=energies_eV)
+            g.create_dataset("energies", data=energies_gev)
             g.create_dataset("zeniths", data=zeniths)
             g.create_dataset("tabulated_values", data=tab)
             g.create_dataset("lower_bounds", data=lower_bounds)
@@ -385,7 +385,7 @@ def _write_hdf5(
             ("cascade_angular_response", cascade_us_ang, cascade_inv_cdfs_ang),
         ]:
             g = f.create_group(name)
-            g.create_dataset("energies", data=energies_eV)
+            g.create_dataset("energies", data=energies_gev)
             g.create_dataset("us", data=us)
             g.create_dataset("inv_cdfs", data=inv_cdfs)
 
@@ -434,9 +434,7 @@ def main(argv=None):
     # ------------------------------------------------------------------
     # Output grids
     # ------------------------------------------------------------------
-    emin_eV = args.emin_gev * _EV_PER_GEV
-    emax_eV = args.emax_gev * _EV_PER_GEV
-    energies_eV = np.logspace(np.log10(emin_eV), np.log10(emax_eV), args.n_energy)
+    energies_gev = np.logspace(np.log10(args.emin_gev), np.log10(args.emax_gev), args.n_energy)
 
     # Zeniths: 0 → π (needed by spore; cos(zeniths) is descending, which
     # scipy's RegularGridInterpolator handles via the strictly-decreasing path)
@@ -446,9 +444,9 @@ def main(argv=None):
     # Effective area
     # ------------------------------------------------------------------
     print("Building effective area grid...")
-    track_aeff = _build_effa_grid(effa_specs, energies_eV, zeniths)
+    track_aeff = _build_effa_grid(effa_specs, energies_gev, zeniths)
     cascade_aeff = track_aeff * args.cascade_aeff_scale
-    lower_bounds, upper_bounds = _build_poly_bounds(energies_eV, zeniths)
+    lower_bounds, upper_bounds = _build_poly_bounds(energies_gev, zeniths)
 
     # ------------------------------------------------------------------
     # Angular response
@@ -456,13 +454,13 @@ def main(argv=None):
     print("Building angular response tables...")
     track_us_ang, track_inv_cdfs_ang = _build_angular_response(
         psf_path=args.psf,
-        energies_eV=energies_eV,
+        energies_gev=energies_gev,
         n_u=args.n_u_ang,
         psf_floor_deg=args.psf_floor_deg,
     )
     cascade_us_ang, cascade_inv_cdfs_ang = _build_angular_response(
         psf_path=None,
-        energies_eV=energies_eV,
+        energies_gev=energies_gev,
         n_u=args.n_u_ang,
         psf_floor_deg=args.psf_floor_deg,
         constant_median_deg=args.cascade_psf_deg,
@@ -479,7 +477,7 @@ def main(argv=None):
     # ------------------------------------------------------------------
     _write_hdf5(
         output_path=args.output,
-        energies_eV=energies_eV,
+        energies_gev=energies_gev,
         zeniths=zeniths,
         track_aeff=track_aeff,
         cascade_aeff=cascade_aeff,
@@ -497,7 +495,7 @@ def main(argv=None):
     # Quick sanity check
     # ------------------------------------------------------------------
     print("\nSanity check:")
-    print(f"  Energy grid:  {energies_eV[0]:.2e} – {energies_eV[-1]:.2e} eV  ({len(energies_eV)} points)")
+    print(f"  Energy grid:  {energies_gev[0]:.2e} – {energies_gev[-1]:.2e} GeV  ({len(energies_gev)} points)")
     print(f"  Zenith grid:  {np.degrees(zeniths[0]):.1f} – {np.degrees(zeniths[-1]):.1f} deg  ({len(zeniths)} points)")
     print(f"  Track A_eff max: {track_aeff.max():.3e} eV^-2")
     print(f"  Track PSF at lowest E: {np.degrees(track_inv_cdfs_ang[0, int(0.5 * args.n_u_ang)]):.2f} deg (median)")

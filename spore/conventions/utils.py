@@ -78,8 +78,10 @@ def sky_to_local(
     )
 
     altaz = sc.transform_to(AltAz(location=ec, obstime=t))
-    az = np.radians(altaz.az.deg)
-    zen = np.pi / 2 - np.radians(altaz.alt.deg)
+    az  = float(altaz.az.rad)
+    # arccos(sin(alt)) = π/2 - alt but stays in [0, π] even when floating-point
+    # noise pushes alt fractionally above 90°, avoiding a ValueError in LocalCoordinate.
+    zen = float(np.arccos(np.sin(altaz.alt.rad)))
     return LocalCoordinate(zen, az)
 
 def sample_cone(

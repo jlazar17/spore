@@ -3,32 +3,31 @@ import pytest
 import h5py
 
 from spore.conventions import SkyCoordinate
-from spore.conventions.units import units
+from spore.conventions import ureg
 from spore.event_sampling.event import Event
 from spore.event_sampling import PointSourceEventSampler
 from spore.detector.detector import Detector
 
 
-def _write_minimal_response(path, energies_eV):
+def _write_minimal_response(path, energies_gev):
     """Write a minimal but complete HDF5 detector response at the given energy grid."""
-    n_e = len(energies_eV)
+    n_e = len(energies_gev)
     n_zen, n_u_ang, n_u_e = 5, 30, 60
     zeniths = np.linspace(np.pi, 0.0, n_zen)
     with h5py.File(path, "w") as f:
-        for name in ["track_effective_area", "cascade_effective_area"]:
-            g = f.create_group(name)
+        for morph in ["track", "cascade"]:
+            mg = f.create_group(morph)
+            g = mg.create_group("effective_area")
             g.create_dataset("zeniths", data=zeniths)
-            g.create_dataset("energies", data=energies_eV)
+            g.create_dataset("energies", data=energies_gev)
             g.create_dataset("tabulated_values", data=np.ones((n_e, n_zen)) * 1e4)
             g.create_dataset("lower_bounds", data=np.array([[0.0, 0.0]]))
             g.create_dataset("upper_bounds", data=np.array([[20.0]]))
-        for name in ["track_angular_response", "cascade_angular_response"]:
-            g = f.create_group(name)
-            g.create_dataset("energies", data=energies_eV)
+            g = mg.create_group("angular_response")
+            g.create_dataset("energies", data=energies_gev)
             g.create_dataset("us", data=np.linspace(0.0, 1.0, n_u_ang))
             g.create_dataset("inv_cdfs", data=np.tile(np.linspace(0.0, 0.5, n_u_ang), (n_e, 1)))
-        for name in ["track_energy_resolution", "cascade_energy_resolution"]:
-            g = f.create_group(name)
+            g = mg.create_group("energy_resolution")
             g.create_dataset("us", data=np.linspace(0.0, 1.0, n_u_e))
             g.create_dataset("inv_cdf", data=np.linspace(-1.0, 1.0, n_u_e))
 
@@ -38,7 +37,7 @@ def low_threshold_detector(tmp_path):
     """Effective area grid covers 1 GeV – 1 PeV, so the sampler's full energy
     range (100 GeV – 1 PeV) has non-zero effective area at every grid point.
     This exercises the fix for the IndexError when effas contains no zeros."""
-    _write_minimal_response(tmp_path / "low.h5", np.logspace(9, 15, 12))
+    _write_minimal_response(tmp_path / "low.h5", np.logspace(0, 6, 12))  # 1 GeV – 1 PeV
     config = {
         "properties": {"latitude": -90.0, "longitude": 0.0, "medium": "Ice"},
         "response": {"detector_response_file": str(tmp_path / "low.h5")},
@@ -52,7 +51,7 @@ def high_threshold_detector(tmp_path):
     sampler's energy range (100 GeV – 1 PeV).  Every call to effa_fxn(e)
     for e in self._es returns 0, giving an all-zero effas array and
     exercising the empty-es guard."""
-    _write_minimal_response(tmp_path / "high.h5", np.logspace(19, 20, 8))
+    _write_minimal_response(tmp_path / "high.h5", np.logspace(10, 11, 8))  # 10 EeV – 100 EeV in GeV
     config = {
         "properties": {"latitude": -90.0, "longitude": 0.0, "medium": "Ice"},
         "response": {"detector_response_file": str(tmp_path / "high.h5")},
@@ -71,7 +70,7 @@ class TestPointSourceEventSampler:
         assert events == []
 
     def test_deltat_returns_list(self, point_source_sampler):
-        events = point_source_sampler.sample_events("cascade", t=60355.0, deltat=86400.0)
+        events = point_source_sampler.sample_events("cascade", t=60355.0, deltat=86400.0 * ureg.s)
         assert isinstance(events, list)
 
     def test_events_are_event_instances(self, point_source_sampler):
@@ -95,15 +94,15 @@ class TestPointSourceEventSampler:
             assert isinstance(event.true_direction, SkyCoordinate)
             assert isinstance(event.reco_direction, SkyCoordinate)
 
-    def test_track_morphology_id_is_two(self, point_source_sampler):
+    def test_track_morphology_stored(self, point_source_sampler):
         events = point_source_sampler.sample_events("track", nevent=10)
         for event in events:
-            assert event.morphology == 2
+            assert event.morphology == "track"
 
-    def test_cascade_morphology_id_is_one(self, point_source_sampler):
+    def test_cascade_morphology_stored(self, point_source_sampler):
         events = point_source_sampler.sample_events("cascade", nevent=10)
         for event in events:
-            assert event.morphology == 1
+            assert event.morphology == "cascade"
 
     def test_true_direction_matches_source_location(self, point_source_sampler, point_source):
         events = point_source_sampler.sample_events("track", nevent=5)
@@ -199,5 +198,5 @@ class TestPointSourceEventSamplerEdgeCases:
     ):
         # With deltat, Poisson(0) == 0, so the result must also be [].
         sampler = PointSourceEventSampler(high_threshold_detector, point_source)
-        events = sampler.sample_events("track", t=60355.0, deltat=365 * units.day)
+        events = sampler.sample_events("track", t=60355.0, deltat=365 * ureg.day)
         assert events == []

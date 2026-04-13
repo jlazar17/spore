@@ -13,19 +13,18 @@ Run from the project root:
     python examples/extended_source_steady_state.py
 """
 
-import os
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from spore.conventions import units
+from spore.conventions import ureg
 from spore.detector import Detector
 from spore.source import ExtendedSource
 from spore.event_sampling import ExtendedSourceEventSampler
 
 RESOURCES = Path(__file__).parent.parent / "resources"
-RESPONSE  = str(RESOURCES / "example_detector_response.h5")
+RESPONSE  = str(RESOURCES / "icecube_10yr_response.h5")
 FLUX_FILE = str(Path(__file__).parent / "_steady_state_flux.h5")
 
 # ---------------------------------------------------------------------------
@@ -51,9 +50,9 @@ with h5py.File(FLUX_FILE, "w") as f:
     grp.create_dataset("fluxes",   data=fluxes)
 
 # ---------------------------------------------------------------------------
-# Detector: Mediterranean (KM3NeT ARCA-like)
+# Detector: Mediterranean
 # ---------------------------------------------------------------------------
-T_OBS = 365.25 * units.day   # one year
+T_OBS = ureg.Quantity(365.25, "day")   # one year
 
 det = Detector.from_config({
     "properties": {
@@ -70,19 +69,17 @@ det = Detector.from_config({
 src = ExtendedSource.from_config({"flux": {"location": f"{FLUX_FILE}:flux"}})
 
 # ---------------------------------------------------------------------------
-# Steady-state sampler: pass deltat so A_eff is averaged over the diurnal
-# cycle.  The same deltat is passed to sample_events for the Poisson draw.
+# Steady-state sampler: pass n_time_samples to enable hour-angle averaging
+# of the effective area over a full diurnal cycle.
 # ---------------------------------------------------------------------------
 print("Building sampler (steady-state mode — A_eff averaged over diurnal cycle)...")
 sampler = ExtendedSourceEventSampler(
     det, src,
-    burnin=5_000,
-    deltat=T_OBS,
     n_time_samples=100,
 )
 
-print(f"Sampling one year of track events...")
-events = sampler.sample_events("track", deltat=T_OBS, oversample=5)
+print("Sampling one year of track events...")
+events = sampler.sample_events("track", deltat=T_OBS)
 print(f"  Got {len(events)} events")
 
 # ---------------------------------------------------------------------------
@@ -90,9 +87,9 @@ print(f"  Got {len(events)} events")
 # For an isotropic flux and a time-averaged A_eff, the declination
 # distribution reflects the detector's solid-angle-weighted sensitivity.
 # ---------------------------------------------------------------------------
-reco_decs  = np.degrees([e.reco_direction.declination for e in events])
-reco_ras   = np.degrees([e.reco_direction.right_ascension for e in events])
-log10e     = [np.log10(e.reco_energy / units.GeV) for e in events]
+reco_decs = np.degrees([e.reco_direction.declination     for e in events])
+reco_ras  = np.degrees([e.reco_direction.right_ascension for e in events])
+log10e    = [np.log10(e.reco_energy.to("GeV").magnitude) for e in events]
 
 fig, axes = plt.subplots(1, 2, figsize=(11, 4))
 fig.suptitle("Extended source — steady-state mode (1 year, isotropic E^-2, Mediterranean detector)")
