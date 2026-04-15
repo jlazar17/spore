@@ -23,12 +23,14 @@ python = "^3.10"
 h5py = "^3.11.0"
 numpy = "^2.0.0"
 scipy = "^1.14.0"
+astropy = "^6.1.2"
+pint = "^0.25"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
 tqdm = "^4.66.4"
 matplotlib = "^3.9.1"
 ipykernel = "^6.29.5"
-astropy = "^6.1.2"
-pytoml = "^0.1.21"
-pint = "^0.25"
 jupyter = "^1.1.1"
 jupyterlab = "^4.4.2"
 
