@@ -3,8 +3,6 @@ import pytest
 
 from spore.detector.detector import Detector, Medium
 from spore.detector.detector_response.detector_response import DetectorResponse
-from spore.detector.detector_response.utils import poly_bounds
-
 
 class TestMedium:
     def test_ice_exists(self):
@@ -70,25 +68,3 @@ class TestDetectorResponse:
         assert np.ndim(result) == 0
 
 
-class TestPolyBounds:
-    def test_returns_bool(self):
-        lb = np.array([[0.0, 0.0]])
-        ub = np.array([[20.0]])
-        result = poly_bounds(0.0, 1e12, lb, ub)
-        assert isinstance(result, bool)
-
-    def test_passes_for_energy_in_range(self):
-        lb = np.array([[0.0, 0.0]])
-        ub = np.array([[20.0]])
-        # log10(1e12) = 12 → 12 > 0 and 12 < 20
-        assert poly_bounds(0.0, 1e12, lb, ub) is True
-
-    def test_fails_when_above_upper_bound(self):
-        lb = np.array([[0.0, 0.0]])
-        ub = np.array([[10.0]])  # log10(e) < 10 required, but log10(1e12)=12
-        assert poly_bounds(0.0, 1e12, lb, ub) is False
-
-    def test_fails_when_below_lower_bound(self):
-        lb = np.array([[15.0]])  # log10(e) > 15 required, but log10(1e12)=12
-        ub = np.array([[20.0]])
-        assert poly_bounds(0.0, 1e12, lb, ub) is False

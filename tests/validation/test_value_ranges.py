@@ -32,20 +32,20 @@ class TestPowerLawValueRanges:
 class TestSmearedEventValueRanges:
     def test_reco_direction_declination_in_range(self, detector):
         sc = SkyCoordinate(0.0, 0.0)
-        for _ in range(20):
-            reco_dir, _, _ = smear_truth(sc, 1e4, detector, "track")  # 10 TeV in GeV
+        for i in range(20):
+            reco_dir, _, _ = smear_truth(sc, 1e4, detector, "track", rng=np.random.default_rng(i))  # 10 TeV in GeV
             assert -np.pi / 2 <= reco_dir.declination <= np.pi / 2
 
     def test_reco_direction_ra_in_range(self, detector):
         sc = SkyCoordinate(0.0, 0.0)
-        for _ in range(20):
-            reco_dir, _, _ = smear_truth(sc, 1e4, detector, "cascade")
+        for i in range(20):
+            reco_dir, _, _ = smear_truth(sc, 1e4, detector, "cascade", rng=np.random.default_rng(i))
             assert 0.0 <= reco_dir.right_ascension <= 2 * np.pi
 
     def test_reco_energy_positive(self, detector):
         sc = SkyCoordinate(0.0, 0.0)
-        for _ in range(20):
-            _, reco_e, _ = smear_truth(sc, 1e4, detector, "track")
+        for i in range(20):
+            _, reco_e, _ = smear_truth(sc, 1e4, detector, "track", rng=np.random.default_rng(i))
             assert reco_e > 0
 
 

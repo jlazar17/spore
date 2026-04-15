@@ -44,9 +44,12 @@ class TestExtendedSourceEventSampler:
         with pytest.raises(ValueError):
             extended_source_sampler.sample_events("muon", nevent=3)
 
-    def test_both_nevent_and_deltat_raises(self, extended_source_sampler):
-        with pytest.raises(ValueError):
-            extended_source_sampler.sample_events("track", nevent=3, deltat=1e20)
+    def test_both_nevent_and_deltat_returns_fixed_count(self, extended_source_sampler):
+        from spore.conventions import ureg
+        events = extended_source_sampler.sample_events(
+            "track", nevent=3, deltat=ureg.Quantity(365.0, "day")
+        )
+        assert len(events) == 3
 
     def test_neither_nevent_nor_deltat_raises(self, extended_source_sampler):
         with pytest.raises(ValueError):

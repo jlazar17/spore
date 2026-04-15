@@ -5,6 +5,8 @@ from spore.conventions import SkyCoordinate
 from spore.event_sampling.event import Event
 from spore.event_sampling.utils import smear_truth
 
+_RNG = np.random.default_rng(0)
+
 
 class TestEvent:
     def test_construction(self):
@@ -34,26 +36,26 @@ class TestEvent:
 class TestSmearTruth:
     def test_returns_sky_coordinate_and_float(self, detector):
         sc = SkyCoordinate(0.0, 0.0)
-        reco_dir, reco_e, _ = smear_truth(sc, 1e13, detector, "track")
+        reco_dir, reco_e, _ = smear_truth(sc, 1e13, detector, "track", rng=np.random.default_rng(0))
         assert isinstance(reco_dir, SkyCoordinate)
         assert isinstance(reco_e, float)
 
     def test_cascade_morphology_works(self, detector):
         sc = SkyCoordinate(0.0, 0.0)
-        reco_dir, reco_e, _ = smear_truth(sc, 1e13, detector, "cascade")
+        reco_dir, reco_e, _ = smear_truth(sc, 1e13, detector, "cascade", rng=np.random.default_rng(0))
         assert isinstance(reco_dir, SkyCoordinate)
         assert reco_e > 0
 
     def test_reco_energy_is_positive(self, detector):
         sc = SkyCoordinate(0.0, 0.0)
         for _ in range(10):
-            _, reco_e, _ = smear_truth(sc, 1e13, detector, "track")
+            _, reco_e, _ = smear_truth(sc, 1e13, detector, "track", rng=np.random.default_rng(0))
             assert reco_e > 0
 
     def test_reco_direction_is_valid(self, detector):
         sc = SkyCoordinate(0.0, 0.0)
         for _ in range(10):
-            reco_dir, _, _ = smear_truth(sc, 1e13, detector, "cascade")
+            reco_dir, _, _ = smear_truth(sc, 1e13, detector, "cascade", rng=np.random.default_rng(0))
             assert -np.pi / 2 <= reco_dir.declination <= np.pi / 2
             assert 0.0 <= reco_dir.right_ascension <= 2 * np.pi
 

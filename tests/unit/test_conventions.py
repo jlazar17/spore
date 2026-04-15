@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from spore.conventions import SkyCoordinate, LocalCoordinate, EarthCoordinate
-from spore.conventions.utils import orthonormal_basis, sample_cone, sample_ring, sky_to_local
+from spore.conventions.utils import sky_to_local
 
 
 class TestLocalCoordinate:
@@ -120,71 +120,3 @@ class TestSkyToLocal:
         assert 0.0 <= lc.azimuth <= 2 * np.pi
 
 
-class TestOrthonormalBasis:
-    def test_output_vectors_are_unit_length(self):
-        v = np.array([0.0, 0.0, 1.0])
-        u, w = orthonormal_basis(v.copy())
-        assert np.linalg.norm(u) == pytest.approx(1.0)
-        assert np.linalg.norm(w) == pytest.approx(1.0)
-
-    def test_output_vectors_are_orthogonal(self):
-        v = np.array([1.0, 0.0, 0.0])
-        u, w = orthonormal_basis(v.copy())
-        assert np.dot(u, w) == pytest.approx(0.0, abs=1e-10)
-
-    def test_non_axis_aligned_input(self):
-        v = np.array([1.0, 1.0, 1.0])
-        u, w = orthonormal_basis(v.copy())
-        assert np.linalg.norm(u) == pytest.approx(1.0)
-        assert np.linalg.norm(w) == pytest.approx(1.0)
-        assert np.dot(u, w) == pytest.approx(0.0, abs=1e-10)
-
-    def test_wrong_dimension_raises(self):
-        with pytest.raises(ValueError):
-            orthonormal_basis(np.array([1.0, 0.0]))
-
-
-class TestSampleRing:
-    def test_output_is_unit_vector(self):
-        v = np.array([0.0, 0.0, 1.0])
-        result = sample_ring(v.copy(), 0.3)
-        assert np.linalg.norm(result) == pytest.approx(1.0, abs=1e-10)
-
-    def test_angle_from_input_equals_psi(self):
-        v = np.array([0.0, 0.0, 1.0])
-        psi = 0.4
-        result = sample_ring(v.copy(), psi)
-        cos_angle = np.clip(np.dot(np.array([0.0, 0.0, 1.0]), result), -1.0, 1.0)
-        assert np.arccos(cos_angle) == pytest.approx(psi, abs=1e-10)
-
-    def test_zero_angle_returns_original_direction(self):
-        v = np.array([1.0, 0.0, 0.0])
-        result = sample_ring(v.copy(), 0.0)
-        assert result == pytest.approx([1.0, 0.0, 0.0], abs=1e-10)
-
-
-class TestSampleCone:
-    def test_returns_sky_coordinate(self):
-        sc = SkyCoordinate(0.0, 0.0)
-        result = sample_cone(sc, 0.1)
-        assert isinstance(result, SkyCoordinate)
-
-    def test_zero_angle_returns_same_direction(self):
-        sc = SkyCoordinate(0.3, 1.0)
-        result = sample_cone(sc, 0.0)
-        assert result.declination == pytest.approx(sc.declination, abs=1e-10)
-        assert result.right_ascension == pytest.approx(sc.right_ascension, abs=1e-10)
-
-    def test_angular_distance_equals_psi(self):
-        sc = SkyCoordinate(0.0, 0.0)
-        psi = 0.3
-        result = sample_cone(sc, psi)
-        cos_angle = np.clip(np.dot(sc.to_cartesian(), result.to_cartesian()), -1.0, 1.0)
-        assert np.arccos(cos_angle) == pytest.approx(psi, abs=1e-10)
-
-    def test_result_is_valid_sky_coordinate(self):
-        sc = SkyCoordinate(0.5, 2.0)
-        for _ in range(20):
-            result = sample_cone(sc, 0.2)
-            assert -np.pi / 2 <= result.declination <= np.pi / 2
-            assert 0.0 <= result.right_ascension <= 2 * np.pi

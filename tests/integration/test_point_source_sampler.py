@@ -114,9 +114,11 @@ class TestPointSourceEventSampler:
                 point_source.location.right_ascension
             )
 
-    def test_both_nevent_and_deltat_raises(self, point_source_sampler):
-        with pytest.raises(ValueError):
-            point_source_sampler.sample_events("track", nevent=5, deltat=100.0)
+    def test_both_nevent_and_deltat_returns_fixed_count(self, point_source_sampler):
+        events = point_source_sampler.sample_events(
+            "track", nevent=5, deltat=ureg.Quantity(365.0, "day")
+        )
+        assert len(events) == 5
 
     def test_neither_nevent_nor_deltat_raises(self, point_source_sampler):
         with pytest.raises(ValueError):
