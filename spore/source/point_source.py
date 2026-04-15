@@ -28,30 +28,6 @@ class PointSource(Source):
         return self.flux(nu, e)
 
     @classmethod
-    def from_toml(cls, path: str) -> 'PointSource':
-        """
-        Build a PointSource from a TOML file.
-
-        The TOML must contain a ``[location]`` table with
-        ``right_ascension`` and ``declination`` (degrees), and a
-        ``[flux]`` table accepted by ``Flux.from_config``.
-
-        Parameters
-        ----------
-        path : str
-            Path to the source TOML file.
-
-        Example
-        -------
-        src = PointSource.from_toml("resources/configs/my_source.toml")
-        """
-        import tomllib, os
-        path = os.path.abspath(path)
-        with open(path, "rb") as fh:
-            cfg = tomllib.load(fh)
-        return cls.from_config(cfg)
-
-    @classmethod
     def from_config(cls, config: Dict, normalization: float = 1.0) -> 'PointSource':
         """Build a PointSource from a config dictionary.
 

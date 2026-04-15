@@ -1,5 +1,4 @@
 import numpy as np
-import h5py as h5
 
 from scipy.interpolate import RegularGridInterpolator
 
@@ -40,11 +39,11 @@ class TabulatedEnergyDecFlux(Distribution):
         """Evaluate the spectral density at energy e and declination dec.
 
         Args:
-            e: Energy in eV. May be a scalar or numpy array.
+            e: Energy in GeV. May be a scalar or numpy array.
             dec: Declination in radians. Must match the shape of e.
 
         Returns:
-            Spectral density in eV^{-1} sr^{-1}.
+            Spectral density in GeV^{-1} sr^{-1}.
 
         Raises:
             ValueError: If e is outside [emin, emax] or dec outside
@@ -63,8 +62,3 @@ class TabulatedEnergyDecFlux(Distribution):
         pts = np.column_stack([np.sin(dec) * np.ones(len(e)), np.log(e)])
         result = np.exp(self._spl(pts))
         return float(result[0]) if scalar else result
-
-    @classmethod
-    def from_file(cls, filename: str) -> 'TabulatedEnergyDecFlux':
-        """Not implemented. Use Flux.from_config with an HDF5 location string."""
-        raise ValueError("Not implemented")

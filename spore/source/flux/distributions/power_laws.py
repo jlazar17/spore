@@ -55,16 +55,6 @@ class PowerLaw(Distribution):
         result = self._norm * (e / self._pivot) ** -self.gamma
         return float(result[0]) if scalar else result
 
-    #def sample_energy(self) -> float:
-    #    u = np.random.rand()
-    #    if self.gamma == 1:
-    #        b = self.emax ** u
-    #        a = self.emin ** (u - 1)
-    #        return b / a
-    #    mg = 1 - self.gamma
-    #    val = (u * self.emax ** mg + (1 - u) * self.emin**mg) ** (1 / mg)
-    #    return val
-
     @classmethod
     def from_config(cls, config: Dict) -> 'PowerLaw':
         """Build a PowerLaw from a config dictionary.

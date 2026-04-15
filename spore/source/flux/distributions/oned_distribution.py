@@ -1,5 +1,4 @@
 import numpy as np
-import h5py as h5
 
 from typing import Optional
 from scipy.interpolate import CubicSpline
@@ -43,8 +42,3 @@ class TabulatedEnergyFlux(Distribution):
             raise ValueError(f"Energy {e[oob][0]} not in range [{self.emin}, {self.emax}]")
         result = np.exp(self._spl(np.log(e)))
         return float(result[0]) if scalar else result
-   
-    @classmethod
-    def from_file(cls, filename: str) -> 'TabulatedEnergyFlux':
-        """Not implemented. Use Flux.from_config with an HDF5 location string."""
-        raise ValueError("Not implemented")
