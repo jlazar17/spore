@@ -17,12 +17,15 @@ resources/example_detector_response_old.h5
 examples/_*.h5
 
 # Data releases (large, not distributed with the package)
-scripts/paper_plots/hese_7yr_data_release/
-scripts/paper_plots/ps10yr_data_release/
+resources/data_releases/*/
 
 # Generated outputs in paper_plots
 scripts/paper_plots/*.pdf
+scripts/paper_plots/*.png
 scripts/paper_plots/*.h5
+
+# scratch directory (local working copies of removed scripts)
+scratch/
 
 # Debug scripts
 scripts/debug_atmo_rates.py
