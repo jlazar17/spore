@@ -1,8 +1,12 @@
-import sys
 import numpy as np
 
-from typing import Callable
-from scipy.interpolate import RegularGridInterpolator
+from typing import Callable, Optional
+from scipy.interpolate import PchipInterpolator
+
+# Code-level default for effective area Gaussian smoothing (energy bins).
+# Can be overridden per-file via the HDF5 meta group or per-call via the
+# smoothing_sigma argument.
+DEFAULT_SMOOTHING_SIGMA: float = 1.5
 
 
 def _largest_contiguous_nonzero(arr: np.ndarray):
@@ -28,13 +32,11 @@ def _trim_isolated_bins(tabulated_values: np.ndarray) -> np.ndarray:
     isolated low-statistics bins at the edges of the sensitivity range without
     touching the main body of the effective area.
 
-    Parameters
-    ----------
-    tabulated_values : ndarray, shape (N_E, N_ZEN)
+    Args:
+        tabulated_values: ndarray of shape ``(N_E, N_ZEN)``.
 
-    Returns
-    -------
-    ndarray, shape (N_E, N_ZEN)  — copy with isolated bins zeroed.
+    Returns:
+        ndarray of shape ``(N_E, N_ZEN)`` — a copy with isolated bins zeroed.
     """
     out = tabulated_values.copy()
     for iz in range(tabulated_values.shape[1]):
@@ -48,52 +50,124 @@ def _trim_isolated_bins(tabulated_values: np.ndarray) -> np.ndarray:
     return out
 
 
+def _smooth_columns(tabulated_values: np.ndarray, sigma: float = 1.0) -> np.ndarray:
+    """Gaussian-smooth each zenith column in log-energy / log-A_eff space.
+
+    MC statistical fluctuations in the high-energy tail of tabulated IRFs
+    produce bin-to-bin noise that propagates into the interpolated effective
+    area.  Applying a Gaussian filter with sigma ~ 1 energy bin smooths
+    through these fluctuations while preserving the overall spectral shape.
+    The filter is applied only within the non-zero range of each column so
+    that edge effects do not bleed into zeroed bins.
+
+    Args:
+        tabulated_values: ndarray of shape ``(N_E, N_ZEN)``.
+        sigma: Standard deviation of the Gaussian kernel in units of energy
+            bins.  Default 1.0 (one bin width).
+
+    Returns:
+        ndarray of shape ``(N_E, N_ZEN)`` — a copy with each column smoothed.
+    """
+    from scipy.ndimage import gaussian_filter1d
+
+    out = tabulated_values.copy()
+    for iz in range(tabulated_values.shape[1]):
+        col = out[:, iz]
+        nz  = np.where(col > 0)[0]
+        if len(nz) < 3:
+            continue
+        lo, hi = nz[0], nz[-1]
+        log_slice = np.log(col[lo : hi + 1])
+        out[lo : hi + 1, iz] = np.exp(gaussian_filter1d(log_slice, sigma=sigma))
+    return out
+
+
 def effa_helper(
     zens: np.ndarray,
     es: np.ndarray,
     tabulated_values: np.ndarray,
-    lower_bounds: np.ndarray,
-    upper_bounds: np.ndarray,
     trim_isolated: bool = True,
+    smoothing_sigma: float = DEFAULT_SMOOTHING_SIGMA,
 ) -> Callable:
-    """
-    Helper function for constructing the effective area spline from
-    detector response file saved values.
+    """Build an effective area callable from tabulated (energy, zenith) values.
 
-    params
-    ______
-    zens: 1D array of zenith angles with shape (N,)
-    es: 1D array of energies in GeV with shape (M,)
-    tabulated_values: 2D array of effective areas with shape (M, N)
-    lower_bounds: Array of coefficients that define the lower polynomial cuts
-    upper_bounds: Array of coefficients that define the upper polynomial cuts
-    trim_isolated: If True (default), zero out energy bins outside the largest
-        contiguous non-zero run per zenith column before interpolating.  This
-        removes isolated low-statistics bins at the edges of the sensitivity
-        range.  Set to False to use the raw tabulated values as-is.
+    Uses PCHIP interpolation along the log-energy axis (smooth, monotone-
+    preserving within each interval) and linear interpolation along the
+    cos(zenith) axis (no ringing across zenith nodes).  The cos(zenith) grid
+    is linearly extrapolated to the hard boundaries cos = ±1 (zenith = 0° and
+    180°) so that queries at the exact poles return physically reasonable
+    values rather than the zero fill.
 
-    returns
-    _______
-    fxn: Function that takes zenith and energy and returns effective area
+    Args:
+        zens: Array of shape ``(N_ZEN,)`` with zenith angles in radians.
+        es: Array of shape ``(N_E,)`` with energies in GeV.
+        tabulated_values: Array of shape ``(N_E, N_ZEN)`` with effective area
+            in cm².
+        trim_isolated: If True (default), zero out energy bins outside the
+            largest contiguous non-zero run per zenith column before
+            interpolating.  This removes isolated low-statistics bins at the
+            edges of the sensitivity range.  Set to False to use the raw
+            tabulated values as-is.
+        smoothing_sigma: Standard deviation (in energy bins) of the Gaussian
+            kernel applied to each zenith column after trimming.  Smooths
+            over MC statistical noise in the high-energy tail.  Default 1.5.
+            Set to 0 to disable smoothing.  **Caveat emptor**: the right value
+            is IRF-dependent — always plot the effective area after loading
+            and verify the shape looks physically reasonable before using
+            SPORE for analysis.
+
+    Returns:
+        Callable ``f(zen, e) -> cm²`` with ``f.e_min_gev`` and
+        ``f.e_max_gev`` attributes set to the IRF energy grid bounds.
     """
     if trim_isolated:
         tabulated_values = _trim_isolated_bins(tabulated_values)
+        if smoothing_sigma > 0:
+            tabulated_values = _smooth_columns(tabulated_values, sigma=smoothing_sigma)
 
-    cos_zens = np.cos(zens)
-    # Use NaN for zero/trimmed cells so the interpolator propagates NaN into
-    # any grid cell that touches a dead bin, rather than filling with a floor
-    # value that would appear as spurious low-level effective area.
+    # Dead/trimmed cells use a large negative sentinel in log-space so that
+    # PCHIP (which requires all-finite inputs) can be applied.  The sentinel
+    # exp(-100) ≈ 3.7e-44 is far below any physical effective area and is
+    # zeroed by the threshold check in the returned callable.
+    _LOG_ZERO_SENTINEL = -100.0
     with np.errstate(divide="ignore", invalid="ignore"):
-        log_vals = np.where(tabulated_values > 0, np.log(tabulated_values), np.nan)
-    i = RegularGridInterpolator(
-        (np.log(es), cos_zens),
-        log_vals,
-        bounds_error=False,
-        fill_value=np.nan,
-    )
+        log_vals = np.where(tabulated_values > 0, np.log(tabulated_values), _LOG_ZERO_SENTINEL)
 
-    le_min, le_max = i.grid[0][0], i.grid[0][-1]
-    cz_min, cz_max = i.grid[1][0], i.grid[1][-1]
+    # Sort to ascending cos(zen) so that np.searchsorted works correctly.
+    cos_zens = np.cos(zens)
+    if cos_zens[0] > cos_zens[-1]:
+        cos_zens = cos_zens[::-1]
+        log_vals = log_vals[:, ::-1]
+
+    # Linearly extrapolate in cos(zen) to the hard boundaries zen=180° (cos=-1)
+    # and zen=0° (cos=+1) so that queries at the poles return valid values.
+    if cos_zens[0] > -1.0:
+        dcz = cos_zens[1] - cos_zens[0]
+        slope = (log_vals[:, 1] - log_vals[:, 0]) / dcz
+        log_vals = np.column_stack([log_vals[:, 0] + slope * (-1.0 - cos_zens[0]), log_vals])
+        cos_zens = np.concatenate([[-1.0], cos_zens])
+
+    if cos_zens[-1] < 1.0:
+        dcz = cos_zens[-1] - cos_zens[-2]
+        slope = (log_vals[:, -1] - log_vals[:, -2]) / dcz
+        log_vals = np.column_stack([log_vals, log_vals[:, -1] + slope * (1.0 - cos_zens[-1])])
+        cos_zens = np.concatenate([cos_zens, [1.0]])
+
+    # Build one PCHIP spline per cos(zen) column.  Evaluating all splines at a
+    # query energy and then linearly interpolating between the two bracketing
+    # cos(zen) columns gives PCHIP smoothness in energy without the ringing
+    # that a 2-D PCHIP produces in the zenith direction at high energies where
+    # the effective area drops steeply.
+    log_es = np.log(es)
+    splines = [PchipInterpolator(log_es, log_vals[:, iz]) for iz in range(len(cos_zens))]
+
+    le_min = log_es[0]
+    le_max = log_es[-1]
+    cz_min = float(cos_zens[0])
+    cz_max = float(cos_zens[-1])
+
+    _nonzero = tabulated_values[tabulated_values > 0]
+    _threshold = float(_nonzero.min()) * 0.01 if _nonzero.size > 0 else 1e-30
 
     def f(zen, e):
         scalar = np.ndim(zen) == 0
@@ -101,56 +175,43 @@ def effa_helper(
         e   = np.atleast_1d(np.asarray(e,   dtype=float))
         cz  = np.cos(zen)
         le  = np.log(e)
-        mask = (
-            (le >= le_min) & (le <= le_max) &
-            (cz >= cz_min) & (cz <= cz_max) &
-            poly_bounds(cz, e, lower_bounds, upper_bounds)
-        )
+
+        mask = (le >= le_min) & (le <= le_max)
         result = np.zeros(zen.shape, dtype=float)
-        if mask.any():
-            pts = np.column_stack([le[mask], cz[mask]])
-            raw = i(pts)
-            # NaN indicates a trimmed/dead cell — leave those as 0
-            result[mask] = np.where(np.isnan(raw), 0.0, np.exp(raw))
+
+        if not mask.any():
+            return float(result[0]) if scalar else result
+
+        le_m  = le[mask]
+        cz_m  = np.clip(cz[mask], cz_min, cz_max)
+
+        # Find the two bracketing cos(zen) columns for each query point.
+        idx  = np.searchsorted(cos_zens, cz_m)
+        idx  = np.clip(idx, 1, len(cos_zens) - 1)
+        iz0  = idx - 1
+        iz1  = idx
+
+        # Evaluate the PCHIP energy splines for both bracketing columns.
+        # splines[iz](le_m) is vectorised over le_m for a fixed column.
+        # We need shape (n_mask,) for each column, then gather per-point.
+        # Building a (n_cz, n_mask) matrix and indexing is the fastest route.
+        unique_cols = np.unique(np.concatenate([iz0, iz1]))
+        col_vals = {ic: splines[ic](le_m) for ic in unique_cols}
+
+        v0 = np.array([col_vals[ic][k] for k, ic in enumerate(iz0)])
+        v1 = np.array([col_vals[ic][k] for k, ic in enumerate(iz1)])
+
+        # Linear interpolation between the two bracketing cos(zen) values.
+        cz0 = cos_zens[iz0]
+        cz1 = cos_zens[iz1]
+        dcz = cz1 - cz0
+        t   = np.where(dcz > 0, (cz_m - cz0) / dcz, 0.0)
+        log_v = v0 + t * (v1 - v0)
+
+        raw = np.exp(log_v)
+        result[mask] = np.where(raw > _threshold, raw, 0.0)
         return float(result[0]) if scalar else result
 
     f.e_min_gev = float(np.exp(le_min))
     f.e_max_gev = float(np.exp(le_max))
     return f
-
-def poly_bounds(
-    coszen: np.ndarray,
-    e: np.ndarray,
-    lower_bounds: np.ndarray,
-    upper_bounds: np.ndarray
-) -> np.ndarray:
-    """
-    Vectorized bounds check for the effective area.
-
-    params
-    ______
-    coszen: cos of the zenith angle — scalar or ndarray
-    e: energy — scalar or ndarray (same shape as coszen)
-    lower_bounds: Array of coefficients that define the lower polynomial cuts
-    upper_bounds: Array of coefficients that define the upper polynomial cuts
-
-    returns
-    _______
-    passed: bool ndarray (or bool scalar) — True where the point lies in the
-        region we are considering the effective area
-    """
-    scalar = np.ndim(coszen) == 0
-    coszen = np.atleast_1d(np.asarray(coszen, dtype=float))
-    e      = np.atleast_1d(np.asarray(e,      dtype=float))
-    y = np.log10(e)
-
-    upper_bool = np.zeros(coszen.shape, dtype=bool)
-    for bound in upper_bounds:
-        upper_bool |= y < np.poly1d(bound)(coszen)
-
-    lower_bool = np.zeros(coszen.shape, dtype=bool)
-    for bound in lower_bounds:
-        lower_bool |= y > np.poly1d(bound)(coszen)
-
-    result = lower_bool & upper_bool
-    return bool(result[0]) if scalar else result
