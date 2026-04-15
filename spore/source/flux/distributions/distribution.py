@@ -1,3 +1,5 @@
+import numpy as np
+
 from abc import ABC, abstractmethod
 
 
@@ -23,6 +25,29 @@ class Distribution(ABC):
     def emax(self) -> float:
         """Maximum energy of the distribution in GeV."""
         return self._emax
+
+    def batch_density(self, e_grid, dec_grid, ra_grid):
+        """Evaluate density on a 3D (dec, RA, energy) grid.
+
+        Default implementation loops over (dec, ra) pairs.  Vectorized
+        subclasses should override for better performance.
+
+        Args:
+            e_grid: (n_e,) energies in GeV.
+            dec_grid: (n_dec,) declinations in radians.
+            ra_grid: (n_ra,) right ascensions in radians.
+
+        Returns:
+            ndarray of shape (n_dec, n_ra, n_e).
+        """
+        n_dec = len(dec_grid)
+        n_ra  = len(ra_grid)
+        n_e   = len(e_grid)
+        result = np.zeros((n_dec, n_ra, n_e))
+        for jdx, dec in enumerate(dec_grid):
+            for kdx, ra in enumerate(ra_grid):
+                result[jdx, kdx, :] = self.density(e_grid, dec, ra)
+        return result
 
     @abstractmethod
     def density(self, e: float, dec: float = None, ra: float = None) -> float:

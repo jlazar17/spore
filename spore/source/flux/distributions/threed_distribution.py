@@ -103,7 +103,22 @@ class TabulatedEnergyDecRAFlux(Distribution):
         result = np.exp(self._spl(pts))
         return float(result[0]) if scalar else result
 
-    @classmethod
-    def from_file(cls, filename: str) -> 'TabulatedEnergyDecRAFlux':
-        """Not implemented. Use Flux.from_config with an HDF5 location string."""
-        raise ValueError("Not implemented")
+    def batch_density(self, e_grid, dec_grid, ra_grid):
+        """Vectorized evaluation on a 3D grid via a single interpolator call.
+
+        Args:
+            e_grid: (n_e,) energies in GeV.
+            dec_grid: (n_dec,) declinations in radians.
+            ra_grid: (n_ra,) right ascensions in radians.
+
+        Returns:
+            ndarray of shape (n_dec, n_ra, n_e).
+        """
+        n_dec, n_ra, n_e = len(dec_grid), len(ra_grid), len(e_grid)
+        # Build interpolation points directly — avoids 3× (n_dec, n_ra, n_e)
+        # meshgrid intermediates (~45 MB for a 40×80×200 grid).
+        pts = np.empty((n_dec * n_ra * n_e, 3))
+        pts[:, 0] = np.repeat(np.sin(dec_grid), n_ra * n_e)
+        pts[:, 1] = np.tile(np.repeat(ra_grid, n_e), n_dec)
+        pts[:, 2] = np.tile(np.log(e_grid), n_dec * n_ra)
+        return np.exp(self._spl(pts)).reshape(n_dec, n_ra, n_e)
