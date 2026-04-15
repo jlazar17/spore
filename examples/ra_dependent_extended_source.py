@@ -138,7 +138,7 @@ class NFWAnnihilationSource(ExtendedSource):
 # ---------------------------------------------------------------------------
 
 RESOURCES    = Path(__file__).parent.parent / "resources"
-RESPONSE_FILE = str(RESOURCES / "icecube_10yr_response.h5")
+RESPONSE_FILE = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
 
 config = {
     "properties": {"latitude": -90.0, "longitude": 0.0, "medium": "Ice"},

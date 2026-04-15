@@ -24,7 +24,7 @@ from spore.source import ExtendedSource
 from spore.event_sampling import ExtendedSourceEventSampler
 
 RESOURCES = Path(__file__).parent.parent / "resources"
-RESPONSE  = str(RESOURCES / "icecube_10yr_response.h5")
+RESPONSE  = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
 FLUX_FILE = str(Path(__file__).parent / "_steady_state_flux.h5")
 
 # ---------------------------------------------------------------------------
@@ -37,11 +37,10 @@ energies_gev = np.logspace(2.0, 6.0, N_E)
 
 PHI_0 = 1e-12   # GeV^-1 cm^-2 s^-1 sr^-1 at 1 TeV
 
+phi = PHI_0 * (energies_gev / 1e3) ** (-2.0)    # (N_E,)
 fluxes = np.zeros((6, N_DEC, N_E))
-for j, E in enumerate(energies_gev):
-    phi = PHI_0 * (E / 1e3) ** (-2.0)
-    fluxes[2, :, j] = 0.5 * phi   # NuMu,    isotropic
-    fluxes[3, :, j] = 0.5 * phi   # NuMuBar, isotropic
+fluxes[2] = 0.5 * phi[np.newaxis, :]            # NuMu,    isotropic
+fluxes[3] = fluxes[2].copy()                    # NuMuBar, isotropic
 
 with h5py.File(FLUX_FILE, "w") as f:
     grp = f.create_group("flux")

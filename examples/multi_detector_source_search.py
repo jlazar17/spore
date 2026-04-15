@@ -29,7 +29,7 @@ from spore.detector import Detector
 from spore.event_sampling import PointSourceEventSampler
 
 RESOURCES = Path(__file__).parent.parent / "resources"
-RESPONSE_FILE = str(RESOURCES / "icecube_10yr_response.h5")
+RESPONSE_FILE = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
 
 # ---------------------------------------------------------------------------
 # Source: soft power-law at declination -30 degrees

@@ -22,7 +22,7 @@ from spore.source import ExtendedSource
 from spore.event_sampling import ExtendedSourceEventSampler
 
 RESOURCES = Path(__file__).parent.parent / "resources"
-RESPONSE  = str(RESOURCES / "icecube_10yr_response.h5")
+RESPONSE  = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
 FLUX_FILE = str(Path(__file__).parent / "_transient_flux.h5")
 
 # ---------------------------------------------------------------------------
@@ -39,14 +39,12 @@ GC_DEC_RAD = np.radians(-29.0)
 WIDTH_RAD   = np.radians(5.0)
 PHI_0       = 1e-12   # GeV^-1 cm^-2 s^-1 sr^-1 at 1 TeV
 
+decs = np.arcsin(np.clip(sindecs, -1.0, 1.0))
+angular_weight = np.exp(-0.5 * ((decs - GC_DEC_RAD) / WIDTH_RAD) ** 2)  # (N_DEC,)
+phi = PHI_0 * (energies_gev / 1e3) ** (-2.0)                             # (N_E,)
 fluxes = np.zeros((6, N_DEC, N_E))
-for i, sd in enumerate(sindecs):
-    dec = np.arcsin(sd)
-    angular_weight = np.exp(-0.5 * ((dec - GC_DEC_RAD) / WIDTH_RAD) ** 2)
-    for j, E in enumerate(energies_gev):
-        phi = PHI_0 * (E / 1e3) ** (-2.0) * angular_weight
-        fluxes[2, i, j] = 0.5 * phi   # NuMu
-        fluxes[3, i, j] = 0.5 * phi   # NuMuBar
+fluxes[2] = 0.5 * angular_weight[:, np.newaxis] * phi[np.newaxis, :]    # NuMu
+fluxes[3] = fluxes[2].copy()                                             # NuMuBar
 
 with h5py.File(FLUX_FILE, "w") as f:
     grp = f.create_group("flux")
