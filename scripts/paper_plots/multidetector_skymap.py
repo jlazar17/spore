@@ -25,24 +25,24 @@ REPO    = os.path.join(HERE, "..", "..")
 ATM_H5  = os.path.join(REPO, "resources", "atmo_flux_models.h5")
 OUTFILE = os.path.join(REPO, "resources", "plotting_data.h5")
 
-icecube = Detector.from_config({
+south_polar = Detector.from_config({
     "properties": {"latitude": -90.0, "longitude": 0.0, "depth": 1945, "medium": "Ice"},
-    "response": {"detector_response_toml": os.path.join(REPO, "resources", "configs", "ps10yr_response.toml")},
+    "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
 })
 
-km3net = Detector.from_config({
+mediterranean = Detector.from_config({
     "properties": {"latitude": 36.3, "longitude": 16.1, "depth": 3500, "medium": "Water"},
-    "response": {"detector_response_toml": os.path.join(REPO, "resources", "configs", "ps10yr_response.toml")},
+    "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
 })
 
 atmo_src = ExtendedSource.from_config(
     {"flux": {"location": f"{ATM_H5}:mceq_h4a_sibyll23d"}}
 )
 
-ic_quick_atmo_sampler   = ExtendedSourceEventSampler(icecube, atmo_src, n_dec=100, n_ra=100, n_e=100)
-km3_quick_atmo_sampler  = ExtendedSourceEventSampler(km3net,  atmo_src, n_dec=100, n_ra=100, n_e=100)
-ic_steady_atmo_sampler  = ExtendedSourceEventSampler(icecube, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
-km3_steady_atmo_sampler = ExtendedSourceEventSampler(km3net,  atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+ic_quick_atmo_sampler   = ExtendedSourceEventSampler(south_polar, atmo_src, n_dec=100, n_ra=100, n_e=100)
+km3_quick_atmo_sampler  = ExtendedSourceEventSampler(mediterranean,  atmo_src, n_dec=100, n_ra=100, n_e=100)
+ic_steady_atmo_sampler  = ExtendedSourceEventSampler(south_polar, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+km3_steady_atmo_sampler = ExtendedSourceEventSampler(mediterranean,  atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
 
 N_EVENTS = 200
 

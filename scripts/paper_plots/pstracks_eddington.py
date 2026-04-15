@@ -25,7 +25,7 @@ from spore.event_sampling import ExtendedSourceEventSampler
 
 HERE    = os.path.abspath(os.path.dirname(__file__))
 REPO    = os.path.join(HERE, "..", "..")
-DATA    = os.path.join(HERE, "ps10yr_data_release")
+DATA    = os.path.join(REPO, "resources", "data_releases", "ps10yr_data_release")
 ATM_H5  = os.path.join(REPO, "resources", "atmo_flux_models.h5")
 AST_H5  = os.path.join(REPO, "resources", "ps10yr_combined_flux.h5")
 OUTFILE = os.path.join(REPO, "resources", "plotting_data.h5")
@@ -67,7 +67,7 @@ def _reco_energies_north_unsmeared(events):
 if __name__ == "__main__":
     det = Detector.from_config({
         "properties": {"latitude": -90.0, "longitude": 0.0, "depth": 1945, "medium": "Ice"},
-        "response": {"detector_response_toml": os.path.join(REPO, "resources", "configs", "ps10yr_response.toml")},
+        "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
     })
 
     # ------------------------------------------------------------------

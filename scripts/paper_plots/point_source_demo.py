@@ -29,7 +29,7 @@ OUTFILE = os.path.join(REPO, "resources", "plotting_data.h5")
 
 det = Detector.from_config({
     "properties": {"latitude": -90.0, "longitude": 0.0, "depth": 1945, "medium": "Ice"},
-    "response": {"detector_response_toml": os.path.join(REPO, "resources", "configs", "ps10yr_response.toml")},
+    "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
 })
 
 # Benchmark point source: soft power law near NGC 1068

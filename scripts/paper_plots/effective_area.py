@@ -25,12 +25,12 @@ OUTFILE = os.path.join(REPO, "resources", "plotting_data.h5")
 
 icecube = Detector.from_config({
     "properties": {"latitude": -90.0, "longitude": 0.0, "depth": 1945, "medium": "Ice"},
-    "response": {"detector_response_toml": os.path.join(REPO, "resources", "configs", "ps10yr_response.toml")},
+    "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
 })
 
 km3net = Detector.from_config({
     "properties": {"latitude": 36.3, "longitude": 16.1, "depth": 3500, "medium": "Water"},
-    "response": {"detector_response_toml": os.path.join(REPO, "resources", "configs", "ps10yr_response.toml")},
+    "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
 })
 
 T_MJD    = 60_355.83

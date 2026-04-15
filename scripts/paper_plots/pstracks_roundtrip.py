@@ -15,7 +15,7 @@ from spore.event_sampling import ExtendedSourceEventSampler
 
 HERE    = os.path.abspath(os.path.dirname(__file__))
 REPO    = os.path.join(HERE, "..", "..")
-DATA    = os.path.join(HERE, "ps10yr_data_release")
+DATA    = os.path.join(REPO, "resources", "data_releases", "ps10yr_data_release")
 ATM_H5  = os.path.join(REPO, "resources", "atmo_flux_models.h5")
 AST_H5  = os.path.join(REPO, "resources", "ps10yr_combined_flux.h5")
 STYLE   = os.path.join(REPO, "resources", "paper.mplstyle")
@@ -52,7 +52,7 @@ def poisson_llh(n, mu):
 if __name__ == "__main__":
     det = Detector.from_config({
         "properties": {"latitude": -90.0, "longitude": 0.0, "depth": 1945, "medium": "Ice"},
-        "response": {"detector_response_toml": os.path.join(REPO, "resources", "configs", "ps10yr_response.toml")},
+        "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
     })
 
     atmo_flux_models = "honda2006 mceq_gsf_sibyll23d mceq_h3a_sibyll23d mceq_h4a_sibyll23d".split()
@@ -122,16 +122,23 @@ if __name__ == "__main__":
     h_atmos = np.zeros(e_cents.shape + (4,))
 
     for (idx, sampler) in enumerate(atmo_samplers):
-        atmo_events     = sampler.sample_events("track", deltat=T_OBS)
-        atmo_reco_e_gev = np.array([e.reco_energy.to('GeV').magnitude for e in atmo_events])
-        atmo_reco_decs  = np.array([e.reco_direction.declination for e in atmo_events])
-        _h_atmo, _ = np.histogram(atmo_reco_e_gev[atmo_reco_decs > 0], bins=e_bins)
-        h_atmos[:, idx] = _h_atmo
+        h_atmo_sum = np.zeros(e_cents.shape)
+        for _ in range(N):
+            atmo_events     = sampler.sample_events("track", deltat=T_OBS)
+            atmo_reco_e_gev = np.array([e.reco_energy.to('GeV').magnitude for e in atmo_events])
+            atmo_reco_decs  = np.array([e.reco_direction.declination for e in atmo_events])
+            _h_atmo, _ = np.histogram(atmo_reco_e_gev[atmo_reco_decs > 0], bins=e_bins)
+            h_atmo_sum += _h_atmo
+        h_atmos[:, idx] = h_atmo_sum / N
 
-    astro_events     = astro_sampler.sample_events("track", deltat=T_OBS)
-    astro_reco_decs  = np.array([e.reco_direction.declination     for e in astro_events])
-    astro_reco_e_gev = np.array([e.reco_energy.to('GeV').magnitude for e in astro_events])
-    h_astro, _ = np.histogram(astro_reco_e_gev[astro_reco_decs > 0], bins=e_bins)
+    h_astro_sum = np.zeros(e_cents.shape)
+    for _ in range(N):
+        astro_events     = astro_sampler.sample_events("track", deltat=T_OBS)
+        astro_reco_decs  = np.array([e.reco_direction.declination     for e in astro_events])
+        astro_reco_e_gev = np.array([e.reco_energy.to('GeV').magnitude for e in astro_events])
+        _h_astro, _ = np.histogram(astro_reco_e_gev[astro_reco_decs > 0], bins=e_bins)
+        h_astro_sum += _h_astro
+    h_astro = h_astro_sum / N
 
     if not os.path.exists(OUTFILE):
         with h5.File(OUTFILE, "w") as h5f:
