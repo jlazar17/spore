@@ -12,43 +12,10 @@ from ..detector import Detector
 
 from .event_sampler import EventSampler
 from .event import Event
-from .utils import smear_truth_batch, zenith_grid, _build_sampling_data, sample_t_event, build_adaptive_log_energy_grid
-
-
-
-def _effa_grid_steady_state(decs, earth_coord, effa_fn, es, n_ha_samples):
-    """
-    Compute the time-averaged effective area at each (dec, E) grid point
-    by integrating analytically over hour angle.
-
-        <A_eff(dec, E)> = (1/2pi) * integral_0^{2pi} A_eff(zeta(dec, HA), E) dHA
-
-    cos(zeta) = sin(lat)*sin(dec) + cos(lat)*cos(dec)*cos(HA)
-
-    Parameters
-    ----------
-    decs        : (n_dec,)  Declinations in radians.
-    earth_coord : EarthCoordinate (only latitude is used).
-    effa_fn     : callable  effa_fn(zenith_rad, energy_GeV) -> float
-    es          : (n_e,)    Energies in internal units (GeV).
-    n_ha_samples: int       Hour-angle samples over [0, 2pi].
-
-    Returns
-    -------
-    effa_avg : ndarray, shape (n_dec, n_e)
-    """
-    lat = earth_coord.latitude
-    has = np.linspace(0, 2 * np.pi, n_ha_samples, endpoint=False)
-    effa_avg = np.zeros((len(decs), len(es)))
-    for jdx, dec in enumerate(decs):
-        cos_zens = (
-            np.sin(lat) * np.sin(dec)
-            + np.cos(lat) * np.cos(dec) * np.cos(has)
-        )
-        zens = np.arccos(np.clip(cos_zens, -1.0, 1.0))  # (n_ha,)
-        zen_g, e_g = np.meshgrid(zens, es, indexing='ij')
-        effa_avg[jdx] = effa_fn(zen_g.ravel(), e_g.ravel()).reshape(len(zens), len(es)).mean(axis=0)
-    return effa_avg
+from .utils import (
+    smear_truth_batch, zenith_grid, _build_sampling_data,
+    build_adaptive_log_energy_grid, _effa_grid_steady_state,
+)
 
 
 class ExtendedSourceEventSampler(EventSampler):
@@ -96,38 +63,32 @@ class ExtendedSourceEventSampler(EventSampler):
         e_max: float = None,
     ):
         """
-        Parameters
-        ----------
-        det : Detector or list of Detector
-            A single detector or a list of detectors for joint multi-detector
-            sampling.  When a list is passed, one per-detector sampler is
-            built internally and ``sample_events`` returns a combined event list
-            with each event tagged by its detector index.
-        src : ExtendedSource
-        steady_state : bool
-            If True, average the effective area over a full diurnal cycle
-            using ``n_time_samples`` hour-angle samples.  Appropriate for
-            analyses spanning many sidereal days.  Default False.
-        n_dec : int
-            Number of sin(dec) grid points.  Default 40.
-        n_ra : int
-            Number of RA grid points.  Default 40.
-        n_e : int
-            Number of energy grid points.  Default 40.
-        n_time_samples : int
-            Hour-angle samples for the steady-state A_eff average.  Passing
-            this argument implies ``steady_state=True``.  Default 100 when
-            steady-state mode is active.
-        adaptive_energy_grid : bool
-            If True (default), place energy grid points at quantiles of the
-            pilot weight ``A_eff * flux * E``, concentrating resolution near
-            the detection threshold where the effective area rises steeply.
-            If False, use uniform log(E) spacing.
-        e_min, e_max : float or None
-            Energy range in GeV for the sampling grid.  If None (default), the
-            bounds are read from the detector response (the energy grid stored
-            in the IRF).  Explicit values override the auto-detected bounds and
-            can be used to restrict or extend the sampled range.
+        Args:
+            det: A single Detector or a list of Detectors for joint
+                multi-detector sampling.  When a list is passed, one
+                per-detector sampler is built internally and ``sample_events``
+                returns a combined event list with each event tagged by its
+                detector index.
+            src: The extended source to sample from.
+            steady_state: If True, average the effective area over a full
+                diurnal cycle using ``n_time_samples`` hour-angle samples.
+                Appropriate for analyses spanning many sidereal days.
+                Default False.
+            n_dec: Number of sin(dec) grid points.  Default 40.
+            n_ra: Number of RA grid points.  Default 40.
+            n_e: Number of energy grid points.  Default 40.
+            n_time_samples: Hour-angle samples for the steady-state A_eff
+                average.  Passing this argument implies ``steady_state=True``.
+                Default 100 when steady-state mode is active.
+            adaptive_energy_grid: If True (default), place energy grid points
+                at quantiles of the pilot weight ``A_eff * flux * E``,
+                concentrating resolution near the detection threshold where the
+                effective area rises steeply.  If False, use uniform log(E)
+                spacing.
+            e_min: Minimum energy in GeV for the sampling grid.  If None, read
+                from the detector response IRF.
+            e_max: Maximum energy in GeV for the sampling grid.  If None, read
+                from the detector response IRF.
         """
         if isinstance(det, list):
             self._multi = True
@@ -219,18 +180,27 @@ class ExtendedSourceEventSampler(EventSampler):
         if _uses_ra:
             fluxes = np.zeros((6, n_dec, n_ra, n_e))
             logger.info("Building flux grid (%d dec × %d RA × %d energy points)", n_dec, n_ra, n_e)
-            for jdx, dec in enumerate(decs):
-                logger.debug("Flux grid: declination slice %d/%d (dec=%.3f rad)", jdx + 1, n_dec, dec)
-                for kdx, ra in enumerate(ras):
-                    for idx, nu in enumerate(neutrinos):
-                        fluxes[idx, jdx, kdx, :] = src(nu, es, dec, ra)
+            # When all species share the same distribution object (common for
+            # isotropic/halo sources), compute the density grid once and scale
+            # by per-species normalizations rather than evaluating n_species times.
+            _dists = src.flux._distributions
+            _norms = src.flux._normalizations
+            _global_norm = src.flux._normalization
+            _dist_ids = [id(_dists[nu]) for nu in neutrinos]
+            if len(set(_dist_ids)) == 1:
+                density_grid = _dists[neutrinos[0]].batch_density(es, decs, ras)
+                for idx, nu in enumerate(neutrinos):
+                    fluxes[idx] = _global_norm * _norms[nu] * density_grid
+            else:
+                for idx, nu in enumerate(neutrinos):
+                    fluxes[idx] = _global_norm * _norms[nu] * _dists[nu].batch_density(es, decs, ras)
         else:
             fluxes = np.zeros((6, n_dec, n_e))
             logger.info("Building flux grid (%d dec × %d energy points)", n_dec, n_e)
             for jdx, dec in enumerate(decs):
                 logger.debug("Flux grid: declination slice %d/%d (dec=%.3f rad)", jdx + 1, n_dec, dec)
                 for idx, nu in enumerate(neutrinos):
-                    fluxes[idx, jdx, :] = src(nu, es, dec)
+                    fluxes[idx, jdx, :] = src(nu, es, dec, 0.0)
 
         # --- effective-area and sampling tables per available morphology ---
         # Compute the zenith grid once for transient mode — it's the same for
@@ -287,16 +257,12 @@ class ExtendedSourceEventSampler(EventSampler):
                 target, es, log_es, sds, sd_edges, ra_edges, le_edges
             )
 
-    def expected_events(
+    def _expected_events_single(
         self,
         morphology: str,
-        deltat: float,
+        deltat,
         t: Optional[float] = None,
     ):
-        if self._multi:
-            deltats = self._resolve_per_detector(deltat, "deltat")
-            ts      = self._resolve_per_detector(t,      "t")
-            return [s.expected_events(morphology, dt, t=t_) for s, dt, t_ in zip(self._samplers, deltats, ts)]
         if morphology not in self._d:
             raise ValueError(
                 f"Morphology '{morphology}' is not available for this detector. "
@@ -304,36 +270,35 @@ class ExtendedSourceEventSampler(EventSampler):
             )
         return self._d[morphology]["norm"] * deltat.to('s').magnitude
 
-    def sample_events(
+    def _sample_events_single(
         self,
         morphology: str,
-        deltat: Optional[float] = None,
+        deltat=None,
         nevent: Optional[int] = None,
         t: Optional[float] = None,
         seed=None,
         delta_clip: tuple = None,
     ):
-        """
-        Draw a set of reconstructed events from the source.
+        """Draw a set of reconstructed events from the source (single-detector).
 
-        Parameters
-        ----------
-        morphology : {"track", "cascade"}
-        t : float or None
-            Reference epoch in MJD.  Used to rotate RA for Earth's rotation
-            since ``t0``.  Defaults to ``t0``.
-        nevent : int or None
-            Fixed number of events.  Mutually exclusive with ``deltat``.
-        deltat : pint Quantity or None
-            Observation window with time units.  The number of events is drawn
-            from Poisson(norm * deltat).
-        delta_clip : tuple (lo, hi) or None
-            If provided, the log-energy smearing variable
-            Delta = ln(E_reco / E_true) is clipped to [lo, hi] before
-            applying to true energies.  Useful for suppressing extreme tails
-            of the energy resolution during validation.
+        Args:
+            morphology: Event morphology, e.g. "track" or "cascade".
+            deltat: Observation window as a pint Quantity with time units.
+                Controls the Poisson mean when ``nevent`` is None, and spreads
+                event times over ``[t, t + deltat]`` whenever it is provided.
+            nevent: Fixed number of events.  When provided alongside
+                ``deltat``, the count is fixed but times are still spread over
+                the window.  At least one of ``deltat`` or ``nevent`` must be
+                given.
+            t: Reference epoch in MJD.  Used to rotate RA for Earth's rotation
+                since ``t0``.  Defaults to ``t0``.
+            seed: Random seed.
+            delta_clip: If provided, clip the log-energy smearing variable
+                Delta = ln(E_reco / E_true) to ``(lo, hi)`` before applying to
+                true energies.  Useful for suppressing extreme tails of the
+                energy resolution during validation.
 
-        .. note::
+        Note:
             **Eddington bias**: the reconstructed-energy distribution can
             differ substantially from a naive A_eff × flux integral over true
             energies.  For steeply falling spectra (γ > 2) combined with the
@@ -345,28 +310,11 @@ class ExtendedSourceEventSampler(EventSampler):
             ``delta_clip=(0, 0)`` (no smearing, E_reco = E_true) against the
             default.
 
-        Returns
-        -------
-        list of Event
+        Returns:
+            List of Event objects.
         """
-        if not ((nevent is None) ^ (deltat is None)):
-            raise ValueError("Exactly one of nevent or deltat must be provided.")
-
-        if self._multi:
-            deltats     = self._resolve_per_detector(deltat,     "deltat")
-            ts          = self._resolve_per_detector(t,          "t")
-            delta_clips = self._resolve_per_detector(delta_clip, "delta_clip")
-            rng = np.random.default_rng(seed)
-            all_events = []
-            for idx, (sampler, dt, t_, dc) in enumerate(zip(self._samplers, deltats, ts, delta_clips)):
-                events = sampler.sample_events(
-                    morphology, deltat=dt, nevent=nevent, t=t_,
-                    seed=int(rng.integers(2**32)), delta_clip=dc,
-                )
-                for ev in events:
-                    ev.detector_id = idx
-                all_events.extend(events)
-            return all_events
+        if nevent is None and deltat is None:
+            raise ValueError("Specify at least one of deltat or nevent.")
 
         self._check_steady_state(deltat)
         if morphology not in self._det.response.available_morphologies:
@@ -434,7 +382,7 @@ class ExtendedSourceEventSampler(EventSampler):
         )
         if deltat is not None:
             deltat_days = deltat.to('day').magnitude
-            event_times = t + rng.uniform(-deltat_days / 2, deltat_days / 2, n)
+            event_times = t + rng.uniform(0.0, deltat_days, n)
         else:
             event_times = np.full(n, t)
         return [

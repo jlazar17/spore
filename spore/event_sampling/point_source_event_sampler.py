@@ -9,7 +9,7 @@ from ..detector import Detector
 
 from .event import Event
 from .event_sampler import EventSampler
-from .utils import smear_truth_batch, sample_t_event
+from .utils import smear_truth_batch, build_adaptive_log_energy_grid, _effa_grid_steady_state
 
 
 class PointSourceEventSampler(EventSampler):
@@ -61,6 +61,7 @@ class PointSourceEventSampler(EventSampler):
         src: PointSource,
         steady_state: bool = False,
         n_time_samples: int = None,
+        n_e: int = 50,
         e_min: float = None,
         e_max: float = None,
     ):
@@ -71,13 +72,14 @@ class PointSourceEventSampler(EventSampler):
                     d, src,
                     steady_state=steady_state,
                     n_time_samples=n_time_samples,
+                    n_e=n_e,
                     e_min=e_min,
                     e_max=e_max,
                 )
                 for d in det
             ]
             self._src = src
-            self._steady_state = steady_state
+            self._steady_state = steady_state or (n_time_samples is not None)
             self._t0 = 60_355.83
             return
 
@@ -97,23 +99,19 @@ class PointSourceEventSampler(EventSampler):
         _src_hi = getattr(getattr(src, 'flux', None), 'e_max_gev', None)
         _e_min = e_min if e_min is not None else (max(_irf_lo, _src_lo) if _src_lo is not None else _irf_lo)
         _e_max = e_max if e_max is not None else (min(_irf_hi, _src_hi) if _src_hi is not None else _irf_hi)
-        self._es = np.clip(np.exp(np.linspace(np.log(_e_min), np.log(_e_max), 50)), _e_min, _e_max)
+        log_es = build_adaptive_log_energy_grid(
+            n_e, first_effa, src, first_morph, e_min=_e_min, e_max=_e_max,
+        )
+        self._es = np.clip(np.exp(log_es), _e_min, _e_max)
         self._cache = {}
 
     def _ha_averaged_effa(self, morphology: str) -> np.ndarray:
         """Return the hour-angle averaged effective area on self._es."""
-        lat = self._det.location.latitude
         dec = self._src.location.declination
-        has = np.linspace(0, 2 * np.pi, self._n_time_samples, endpoint=False)
-        cos_zens = (
-            np.sin(lat) * np.sin(dec)
-            + np.cos(lat) * np.cos(dec) * np.cos(has)
-        )
-        zens = np.arccos(np.clip(cos_zens, -1.0, 1.0))
         effa_fn = self._det.response.effective_area[morphology]
-        zen_g, e_g = np.meshgrid(zens, self._es, indexing='ij')
-        effa_vals = effa_fn(zen_g.ravel(), e_g.ravel()).reshape(len(zens), len(self._es))
-        return effa_vals.mean(axis=0)
+        return _effa_grid_steady_state(
+            np.array([dec]), self._det.location, effa_fn, self._es, self._n_time_samples
+        )[0]
 
     def _build_cdf(self, morphology: str, effas: np.ndarray):
         """Build and cache the (spline, norm) pair for the given effective areas."""
@@ -185,16 +183,12 @@ class PointSourceEventSampler(EventSampler):
         cache_key = morphology if self._steady_state else (t, morphology)
         return self._cache[cache_key]
 
-    def expected_events(
+    def _expected_events_single(
         self,
         morphology: str,
         deltat,
         t: Optional[float] = None,
     ):
-        if self._multi:
-            deltats = self._resolve_per_detector(deltat, "deltat")
-            ts      = self._resolve_per_detector(t,      "t")
-            return [s.expected_events(morphology, dt, t=t_) for s, dt, t_ in zip(self._samplers, deltats, ts)]
         if t is None:
             t = self._t0
         if morphology not in self._det.response.available_morphologies:
@@ -206,7 +200,7 @@ class PointSourceEventSampler(EventSampler):
         _, norm = self._get_cached(morphology, t)
         return norm * deltat.to('s').magnitude
 
-    def sample_events(
+    def _sample_events_single(
         self,
         morphology: str,
         deltat=None,
@@ -215,15 +209,18 @@ class PointSourceEventSampler(EventSampler):
         seed=None,
         delta_clip: tuple = None,
     ):
-        """Draw reconstructed events from the point source.
+        """Draw reconstructed events from the point source (single-detector).
 
         Parameters
         ----------
         morphology : str
         deltat : pint Quantity or None
-            Observation livetime.  Mutually exclusive with ``nevent``.
+            Observation livetime.  Sets the Poisson mean when ``nevent`` is
+            None, and spreads event times over ``[t, t + deltat]`` whenever
+            it is provided.
         nevent : int or None
-            Fixed event count.  Mutually exclusive with ``deltat``.
+            Fixed event count.  May be combined with ``deltat`` to fix the
+            count while still spreading times over the observation window.
         t : float or None
             Reference epoch in MJD.  Defaults to ``t0``.
         seed : int or None
@@ -241,24 +238,8 @@ class PointSourceEventSampler(EventSampler):
             quantify it, compare ``delta_clip=(0, 0)`` (no smearing) against
             the default.
         """
-        if not ((deltat is None) ^ (nevent is None)):
-            raise ValueError("Specify exactly one of deltat or nevent.")
-
-        if self._multi:
-            deltats      = self._resolve_per_detector(deltat,      "deltat")
-            ts           = self._resolve_per_detector(t,           "t")
-            delta_clips  = self._resolve_per_detector(delta_clip,  "delta_clip")
-            rng = np.random.default_rng(seed)
-            all_events = []
-            for idx, (sampler, dt, t_, dc) in enumerate(zip(self._samplers, deltats, ts, delta_clips)):
-                events = sampler.sample_events(
-                    morphology, deltat=dt, nevent=nevent, t=t_,
-                    seed=int(rng.integers(2**32)), delta_clip=dc,
-                )
-                for ev in events:
-                    ev.detector_id = idx
-                all_events.extend(events)
-            return all_events
+        if deltat is None and nevent is None:
+            raise ValueError("Specify at least one of deltat or nevent.")
 
         self._check_steady_state(deltat)
         rng = np.random.default_rng(seed)
@@ -290,7 +271,7 @@ class PointSourceEventSampler(EventSampler):
         )
         if deltat is not None:
             deltat_days = deltat.to('day').magnitude
-            event_times = t + rng.uniform(-deltat_days / 2, deltat_days / 2, nevent)
+            event_times = t + rng.uniform(0.0, deltat_days, nevent)
         else:
             event_times = np.full(nevent, t)
         return [

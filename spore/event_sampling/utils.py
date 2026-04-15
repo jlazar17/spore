@@ -1,7 +1,41 @@
 import numpy as np
 
-from ..conventions import SkyCoordinate, EarthCoordinate, sample_cone, ureg
+from ..conventions import SkyCoordinate, EarthCoordinate
 from ..detector import Detector
+
+
+def _effa_grid_steady_state(decs, earth_coord, effa_fn, es, n_ha_samples):
+    """Compute the hour-angle-averaged effective area at each (dec, E) grid point.
+
+        <A_eff(dec, E)> = (1/2pi) * integral_0^{2pi} A_eff(zeta(dec, HA), E) dHA
+
+    cos(zeta) = sin(lat)*sin(dec) + cos(lat)*cos(dec)*cos(HA)
+
+    Args:
+        decs: Array of shape ``(n_dec,)`` with declinations in radians.  Pass
+            ``np.array([dec])`` for a single declination (point-source case).
+        earth_coord: EarthCoordinate; only the latitude attribute is used.
+        effa_fn: Callable with signature ``effa_fn(zenith_rad, energy_GeV) -> float``.
+        es: Array of shape ``(n_e,)`` with energies in GeV.
+        n_ha_samples: Number of hour-angle samples over ``[0, 2π]``.
+
+    Returns:
+        ndarray of shape ``(n_dec, n_e)`` with the hour-angle-averaged effective
+        area in cm².
+    """
+    lat = earth_coord.latitude
+    has = np.linspace(0, 2 * np.pi, n_ha_samples, endpoint=False)
+
+    cos_zens = (
+        np.sin(lat) * np.sin(decs)[:, np.newaxis]
+        + np.cos(lat) * np.cos(decs)[:, np.newaxis] * np.cos(has)[np.newaxis, :]
+    )  # (n_dec, n_ha)
+    zens = np.arccos(np.clip(cos_zens, -1.0, 1.0))
+
+    zen_flat = np.repeat(zens.ravel(), len(es))
+    e_flat   = np.tile(es, len(decs) * n_ha_samples)
+    effa_vals = effa_fn(zen_flat, e_flat).reshape(len(decs), n_ha_samples, len(es))
+    return effa_vals.mean(axis=1)  # (n_dec, n_e)
 
 
 def _effa_energy_bounds(effa_fn) -> tuple:
@@ -34,29 +68,24 @@ def build_adaptive_log_energy_grid(
     near the detection threshold where A_eff rises steeply and the midpoint
     rule error is largest.
 
-    Parameters
-    ----------
-    n_e : int
-        Number of grid points (cell centres).
-    effa_fn : callable or list of callables
-        Effective area function(s) ``effa(zenith_rad, energy_GeV) -> cm^2``.
-        For per-species responses pass the list; the species are summed.
-    src : Source
-        Source object with a ``__call__(nu, E)`` interface.
-    morphology : str
-        ``"track"`` sums nu_mu + anti-nu_mu; anything else sums all six species.
-    n_pilot : int
-        Number of points in the fine pilot grid.  Default 500.
-    e_min, e_max : float or None
-        Energy range in GeV.  If None (default), the bounds are read from the
-        ``e_min_gev`` / ``e_max_gev`` attributes of ``effa_fn`` (set by
-        ``effa_helper`` at load time).  Falls back to 100 GeV – 10 PeV if the
-        attributes are absent.
+    Args:
+        n_e: Number of grid points (cell centres).
+        effa_fn: Effective area function(s) with signature
+            ``effa(zenith_rad, energy_GeV) -> cm²``.  For per-species responses
+            pass a list; the species are summed.
+        src: Source object with a ``__call__(nu, E)`` interface.
+        morphology: ``"track"`` sums nu_mu + anti-nu_mu; anything else sums all
+            six species.
+        n_pilot: Number of points in the fine pilot grid.  Default 500.
+        e_min: Minimum energy in GeV.  If None, read from the ``e_min_gev``
+            attribute of ``effa_fn`` (set by ``effa_helper`` at load time).
+            Falls back to 100 GeV if the attribute is absent.
+        e_max: Maximum energy in GeV.  If None, read from the ``e_max_gev``
+            attribute of ``effa_fn``.  Falls back to 10 PeV if absent.
 
-    Returns
-    -------
-    log_es : ndarray, shape (n_e,)
-        Cell-centre positions in ln(E/GeV), non-uniformly spaced.
+    Returns:
+        ndarray of shape ``(n_e,)`` with cell-centre positions in ln(E/GeV),
+        non-uniformly spaced.
     """
     from ..physics import neutrinos
 
@@ -82,22 +111,14 @@ def build_adaptive_log_energy_grid(
     # The spectral shape is what matters; absolute normalisation cancels.
     # Pass the full es_pilot array rather than iterating over scalars to avoid
     # the scalar-indexing edge case in TabulatedEnergyDecFlux.density.
-    import inspect
-    _call_sig = inspect.signature(src.__call__)
-    _needs_dec = "dec" in _call_sig.parameters
-
+    # Pass dec=0.0, ra=0.0 as representative sky position for the pilot flux.
+    # All distribution types accept both arguments (ignoring whichever they
+    # don't use), so no branching on source dimensionality is needed.
     if "track" in morphology:
-        if _needs_dec:
-            fluxes = (src(neutrinos[2], es_pilot, 0.0)
-                      + src(neutrinos[3], es_pilot, 0.0))
-        else:
-            fluxes = (src(neutrinos[2], es_pilot)
-                      + src(neutrinos[3], es_pilot))
+        fluxes = (src(neutrinos[2], es_pilot, 0.0, 0.0)
+                  + src(neutrinos[3], es_pilot, 0.0, 0.0))
     else:
-        if _needs_dec:
-            fluxes = sum(src(nu, es_pilot, 0.0) for nu in neutrinos)
-        else:
-            fluxes = sum(src(nu, es_pilot) for nu in neutrinos)
+        fluxes = sum(src(nu, es_pilot, 0.0, 0.0) for nu in neutrinos)
     fluxes = np.asarray(fluxes, dtype=float)
 
     weights = effas * fluxes * es_pilot  # integrand in d(ln E) space
@@ -116,27 +137,25 @@ def build_adaptive_log_energy_grid(
 
 
 def _build_sampling_data(target, es, log_es, sds, sd_edges, ra_edges, le_edges):
-    """
-    Precompute hierarchical inverse-CDF tables from a 3-D target grid.
+    """Precompute hierarchical inverse-CDF tables from a 3-D target grid.
 
-    The joint distribution is factored as:
+    The joint distribution is factored as::
 
         p(sin_dec, RA, log_E) = p(sin_dec) * p(log_E | sin_dec) * p(RA | sin_dec, log_E)
 
-    Parameters
-    ----------
-    target   : ndarray (n_dec, n_ra, n_e)   A_eff × flux on the grid.
-    es       : (n_e,)   Energies in eV (cell centres).
-    log_es   : (n_e,)   log(E) (cell centres).
-    sds      : (n_dec,) sin(dec) cell centres.
-    sd_edges : (n_dec+1,) sin(dec) cell edges.
-    ra_edges : (n_ra+1,)  RA cell edges in radians.
-    le_edges : (n_e+1,)   log(E) cell edges.
+    Args:
+        target: ndarray of shape ``(n_dec, n_ra, n_e)`` with A_eff × flux on
+            the grid.
+        es: Array of shape ``(n_e,)`` with energies in GeV (cell centres).
+        log_es: Array of shape ``(n_e,)`` with log(E) (cell centres).
+        sds: Array of shape ``(n_dec,)`` with sin(dec) cell centres.
+        sd_edges: Array of shape ``(n_dec+1,)`` with sin(dec) cell edges.
+        ra_edges: Array of shape ``(n_ra+1,)`` with RA cell edges in radians.
+        le_edges: Array of shape ``(n_e+1,)`` with log(E) cell edges.
 
-    Returns
-    -------
-    dict with keys: norm, cdf_dec, cdf_e_given_dec, cdf_ra_given_dec_e,
-                    sd_edges, ra_edges, le_edges.
+    Returns:
+        dict with keys ``norm``, ``cdf_dec``, ``cdf_e_given_dec``,
+        ``cdf_ra_given_dec_e``, ``sd_edges``, ``ra_edges``, ``le_edges``.
     """
     n_dec, n_ra, n_e = target.shape
 
@@ -146,12 +165,14 @@ def _build_sampling_data(target, es, log_es, sds, sd_edges, ra_edges, le_edges):
 
     w = target * es[np.newaxis, np.newaxis, :]
 
-    cell_vols = (
-        sd_widths[:, np.newaxis, np.newaxis]
+    # Compute norm via broadcasting without materialising a separate cell_vols
+    # array — saves one full (n_dec, n_ra, n_e) allocation.
+    norm = float((
+        w
+        * sd_widths[:, np.newaxis, np.newaxis]
         * ra_widths[np.newaxis, :, np.newaxis]
         * le_widths[np.newaxis, np.newaxis, :]
-    )
-    norm = float((w * cell_vols).sum())
+    ).sum())
 
     # Weight by log-E cell widths so the first/last half-width bins are not
     # over-sampled.  RA widths are uniform and cancel; sd widths are uniform
@@ -189,52 +210,6 @@ def _build_sampling_data(target, es, log_es, sds, sd_edges, ra_edges, le_edges):
     }
 
 
-def _build_sampling_data_2d(target, sds, sd_edges, ra_edges):
-    """
-    Precompute hierarchical inverse-CDF tables from a 2-D target grid.
-
-    Used for monochromatic sources where energy is fixed and only direction
-    needs to be sampled.  The joint distribution is factored as:
-
-        p(sin_dec, RA) = p(sin_dec) * p(RA | sin_dec)
-
-    Parameters
-    ----------
-    target   : ndarray (n_dec, n_ra)   A_eff × spatial_flux on the grid.
-    sds      : (n_dec,) sin(dec) cell centres.
-    sd_edges : (n_dec+1,) sin(dec) cell edges.
-    ra_edges : (n_ra+1,)  RA cell edges in radians.
-
-    Returns
-    -------
-    dict with keys: norm, cdf_dec, cdf_ra_given_dec, sd_edges, ra_edges.
-    """
-    n_dec, n_ra = target.shape
-    sd_widths = np.diff(sd_edges)
-    ra_widths = np.diff(ra_edges)
-
-    cell_vols = sd_widths[:, np.newaxis] * ra_widths[np.newaxis, :]
-    norm = float((target * cell_vols).sum())
-
-    w_dec = target.sum(axis=1)
-    total_dec = w_dec.sum()
-    if total_dec > 0:
-        cdf_dec = np.cumsum(w_dec / total_dec)
-    else:
-        cdf_dec = np.linspace(1.0 / n_dec, 1.0, n_dec)
-
-    row_totals = target.sum(axis=1, keepdims=True)
-    safe = np.where(row_totals > 0, row_totals, 1.0)
-    cdf_ra_given_dec = np.cumsum(target / safe, axis=1)
-
-    return {
-        "norm":             norm,
-        "cdf_dec":          cdf_dec,
-        "cdf_ra_given_dec": cdf_ra_given_dec,
-        "sd_edges":         sd_edges,
-        "ra_edges":         ra_edges,
-    }
-
 
 def zenith_grid(
     decs: np.ndarray,
@@ -242,67 +217,31 @@ def zenith_grid(
     earth_coord: EarthCoordinate,
     t: float,
 ) -> np.ndarray:
-    """
-    Compute the zenith angle at each (dec, RA) grid point for a single
-    observation time using a vectorised astropy coordinate transform.
+    """Compute the zenith angle at each (dec, RA) grid point for a single epoch.
 
-    Parameters
-    ----------
-    decs : (n_dec,)   Declinations in radians.
-    ras  : (n_ra,)    Right ascensions in radians.
-    earth_coord : EarthCoordinate
-    t    : float      Observation epoch in MJD.
+    Uses a vectorised astropy coordinate transform.
 
-    Returns
-    -------
-    zeniths : ndarray, shape (n_dec, n_ra)   Zenith angle in radians.
+    Args:
+        decs: Array of shape ``(n_dec,)`` with declinations in radians.
+        ras: Array of shape ``(n_ra,)`` with right ascensions in radians.
+        earth_coord: EarthCoordinate of the detector.
+        t: Observation epoch in MJD.
+
+    Returns:
+        ndarray of shape ``(n_dec, n_ra)`` with zenith angles in radians.
     """
     from astropy.time import Time
     from astropy.coordinates import EarthLocation, AltAz, SkyCoord
     from astropy import units as u
 
-    dec_grid, ra_grid = np.meshgrid(decs, ras, indexing='ij')
-    sc = SkyCoord(ra=ra_grid.ravel() * u.rad, dec=dec_grid.ravel() * u.rad)
+    sc = SkyCoord(ra=np.tile(ras, len(decs)) * u.rad,
+                  dec=np.repeat(decs, len(ras)) * u.rad)
     ec = EarthLocation.from_geodetic(
         lon=earth_coord.longitude * u.rad,
         lat=earth_coord.latitude * u.rad,
     )
     altaz = sc.transform_to(AltAz(location=ec, obstime=Time(t, format='mjd')))
     return (np.pi / 2 - np.radians(altaz.alt.deg)).reshape(len(decs), len(ras))
-
-def new_sample(bounds) -> np.ndarray:
-    """Draw a uniform random sample from a rectangular parameter space.
-
-    Args:
-        bounds: Sequence of (lower, upper) pairs defining the bounds of each
-            dimension.
-
-    Returns:
-        Array of length len(bounds) with each element drawn uniformly from
-        its respective interval.
-    """
-    return np.array([np.random.uniform(lb, ub) for lb, ub in bounds])
-
-def sample_t_event(t: float, deltat) -> float:
-    """Return a uniformly-distributed event time within the observation window.
-
-    Parameters
-    ----------
-    t : float
-        Reference epoch in MJD.
-    deltat : pint Quantity or None
-        Observation window as a pint time Quantity (e.g. ``10 * ureg.year``).
-        If None, returns ``t`` unchanged (fixed-time mode).
-
-    Returns
-    -------
-    float
-        Event time in MJD.
-    """
-    if deltat is None:
-        return t
-    deltat_days = deltat.to('day').magnitude
-    return t + np.random.uniform(low=-deltat_days / 2, high=deltat_days / 2)
 
 
 def _sample_cone_batch(
@@ -313,16 +252,15 @@ def _sample_cone_batch(
 ) -> tuple:
     """Vectorized cone sampling for N events.
 
-    Parameters
-    ----------
-    decs : (N,) True declinations in radians.
-    ras  : (N,) True right ascensions in radians.
-    psis : (N,) Half-opening angles (PSF deflections) in radians.
+    Args:
+        decs: Array of shape ``(N,)`` with true declinations in radians.
+        ras: Array of shape ``(N,)`` with true right ascensions in radians.
+        psis: Array of shape ``(N,)`` with half-opening angles (PSF deflections)
+            in radians.
+        rng: numpy Generator or None.
 
-    Returns
-    -------
-    reco_decs : (N,) ndarray
-    reco_ras  : (N,) ndarray
+    Returns:
+        Tuple ``(reco_decs, reco_ras)`` each of shape ``(N,)``.
     """
     cos_dec = np.cos(decs)
     vs = np.stack([cos_dec * np.cos(ras), cos_dec * np.sin(ras), np.sin(decs)], axis=1)
@@ -366,27 +304,22 @@ def smear_truth_batch(
     accepts arrays).  Angular smearing uses a per-event loop because the IRF
     callable wraps scalar interpolation; cone geometry is then vectorized.
 
-    Parameters
-    ----------
-    true_decs      : (N,) True declinations in radians.
-    true_ras       : (N,) True right ascensions in radians.
-    true_energies  : (N,) True energies in GeV.
-    detector       : Detector
-    morphology     : str
-    rng            : numpy Generator or None
-    delta_clip     : (float, float) or None
-        If provided, clip the log-ratio Delta = ln(E_reco/E_true) to
-        ``(delta_min, delta_max)`` before exponentiating.  Useful for
-        suppressing the extreme left tail of the energy resolution that
-        corresponds to catastrophic reconstruction failures.  Has no effect
-        when joint smearing is used.  Example: ``delta_clip=(-5, 3)``.
+    Args:
+        true_decs: Array of shape ``(N,)`` with true declinations in radians.
+        true_ras: Array of shape ``(N,)`` with true right ascensions in radians.
+        true_energies: Array of shape ``(N,)`` with true energies in GeV.
+        detector: Detector instance.
+        morphology: Event morphology string.
+        rng: numpy Generator or None.
+        delta_clip: If provided, clip the log-ratio Delta = ln(E_reco/E_true)
+            to ``(delta_min, delta_max)`` before exponentiating.  Useful for
+            suppressing the extreme left tail of the energy resolution that
+            corresponds to catastrophic reconstruction failures.  Has no effect
+            when joint smearing is used.  Example: ``(-5, 3)``.
 
-    Returns
-    -------
-    reco_decs     : (N,) ndarray
-    reco_ras      : (N,) ndarray
-    reco_energies : (N,) ndarray  [GeV]
-    ang_errs      : (N,) ndarray  [radians]
+    Returns:
+        Tuple ``(reco_decs, reco_ras, reco_energies, ang_errs)`` each of shape
+        ``(N,)``, with energies in GeV and angles in radians.
     """
     n    = len(true_energies)
     _rng = rng if rng is not None else np.random.default_rng()
@@ -394,7 +327,14 @@ def smear_truth_batch(
 
     if js is not None and morphology in js:
         joint_fn = js[morphology]
-        results       = [joint_fn(e, d, rng=_rng) for e, d in zip(true_energies, true_decs)]
+        # Convert equatorial dec to local zenith for the smearing band lookup.
+        # Use the hour-angle-averaged formula cos(zen) = sin(lat)*sin(dec),
+        # which is the representative zenith after averaging over sidereal time.
+        lat = detector.location.latitude
+        local_zeniths = np.arccos(np.clip(
+            np.sin(lat) * np.sin(true_decs), -1.0, 1.0
+        ))
+        results       = [joint_fn(e, z, rng=_rng) for e, z in zip(true_energies, local_zeniths)]
         # joint_fn returns reco_energy as a pint Quantity; strip units so the
         # array is plain float64, consistent with the non-joint path.
         reco_energies = np.array([r[0].magnitude for r in results])
@@ -431,24 +371,32 @@ def smear_truth(
     true_direction: SkyCoordinate,
     true_energy: float,
     detector: Detector,
-    morphology: str
+    morphology: str,
+    rng=None,
 ):
-    """
-    Apply detector smearing to a true (direction, energy) and return the
-    reconstructed quantities plus an angular error estimate.
+    """Apply detector smearing to a true (direction, energy) scalar event.
 
-    If the detector response includes a joint smearing IRF (loaded via
-    DetectorResponse.from_dataverse), the reconstruction is drawn from the
-    full conditional distribution P(E_reco, PSF, AngErr | E_true, dec).
-    Otherwise, energy and angular smearing are sampled independently from the
-    1-D marginal inverse-CDFs stored in the HDF5 response file, and ang_err
-    is set to 0.
+    If the detector response includes a joint smearing IRF, the reconstruction
+    is drawn from the full conditional distribution
+    P(E_reco, PSF, AngErr | E_true, dec).  Otherwise, energy and angular
+    smearing are sampled independently from the 1-D marginal inverse-CDFs
+    stored in the HDF5 response file.
 
-    Returns
-    -------
-    reco_direction : SkyCoordinate
-    reco_energy    : float  (internal energy units, GeV)
-    ang_err        : float  (radians; 0 when joint smearing is unavailable)
+    Args:
+        true_direction: True event direction as a SkyCoordinate.
+        true_energy: True energy in GeV.
+        detector: Detector instance.
+        morphology: Event morphology string.
+        rng: numpy Generator or None.  If None, a fresh Generator is created
+            (non-reproducible).  Pass a seeded Generator for reproducibility.
+
+    Returns:
+        Tuple ``(reco_direction, reco_energy, ang_err)`` where
+        ``reco_direction`` is a SkyCoordinate, ``reco_energy`` is in GeV,
+        and ``ang_err`` is in radians (0 when joint smearing is unavailable).
+
+    Raises:
+        ValueError: If ``morphology`` is not available for this detector.
     """
     if morphology not in detector.response.available_morphologies:
         raise ValueError(
@@ -456,15 +404,18 @@ def smear_truth(
             f"Available: {detector.response.available_morphologies}."
         )
 
+    _rng = rng if rng is not None else np.random.default_rng()
+
     js = detector.response.joint_smearing
     if js is not None and morphology in js:
-        reco_energy, psi, ang_err = js[morphology](
-            true_energy, true_direction.declination
-        )
+        lat = detector.location.latitude
+        dec = true_direction.declination
+        local_zenith = float(np.arccos(np.clip(np.sin(lat) * np.sin(dec), -1.0, 1.0)))
+        reco_energy, psi, ang_err = js[morphology](true_energy, local_zenith, rng=_rng)
     else:
         ang_sampler = detector.response.angular_response.get(morphology)
         if ang_sampler is not None:
-            psi     = ang_sampler(true_energy, np.random.rand())
+            psi     = ang_sampler(true_energy, float(_rng.random()))
             ang_err = ang_sampler(true_energy, 0.5)
         else:
             psi     = np.nan
@@ -472,12 +423,18 @@ def smear_truth(
 
         e_sampler = detector.response.energy_response.get(morphology)
         if e_sampler is not None:
-            reco_energy = np.exp(e_sampler(np.random.rand())) * true_energy
+            reco_energy = np.exp(e_sampler(float(_rng.random()))) * true_energy
         else:
             reco_energy = np.nan
 
     if np.isnan(psi):
         reco_direction = SkyCoordinate(np.nan, np.nan)
     else:
-        reco_direction = sample_cone(true_direction, psi)
+        rd, rr = _sample_cone_batch(
+            np.array([true_direction.declination]),
+            np.array([true_direction.right_ascension]),
+            np.array([psi]),
+            rng=_rng,
+        )
+        reco_direction = SkyCoordinate(float(rd[0]), float(rr[0]))
     return reco_direction, reco_energy, ang_err

@@ -65,13 +65,14 @@ class EventSampler(ABC):
                 deltat, _STEADY_STATE_THRESHOLD,
             )
 
-    @abstractmethod
     def sample_events(
         self,
         morphology: str,
-        deltat: Optional[float] = None,
+        deltat=None,
         nevent: Optional[int] = None,
         t: Optional[float] = None,
+        seed=None,
+        delta_clip: tuple = None,
     ) -> List[Event]:
         """Sample a list of events from the source and detector.
 
@@ -82,39 +83,90 @@ class EventSampler(ABC):
         Args:
             morphology: Event morphology to sample, either "track" or "cascade".
             deltat: Observation window as a pint Quantity with time units.
-                Mutually exclusive with nevent.
-            nevent: Fixed number of events to sample. Mutually exclusive with
-                deltat.
-            t: Reference epoch in MJD. Defaults to the sampler's internal
-                reference epoch (2024-01-01).
+                Controls the Poisson mean when ``nevent`` is None, and sets the
+                time spread ``[t, t + deltat]`` whenever it is provided.
+            nevent: Fixed event count.  When provided alongside ``deltat``,
+                the count is fixed but times are still drawn over
+                ``[t, t + deltat]``.  At least one of ``deltat`` or ``nevent``
+                must be given.
+            t: Reference epoch in MJD. Event times start at ``t``.  Defaults
+                to the sampler's internal reference epoch (2024-01-01).
+            seed: Random seed. Pass different values across pseudo-experiments.
+            delta_clip: Clips the log-energy smearing Delta = ln(E_reco/E_true)
+                to (lo, hi). Useful for suppressing tail artefacts in validation.
 
         Returns:
             List of sampled Event objects.
         """
-        pass
+        if self._multi:
+            deltats     = self._resolve_per_detector(deltat,     "deltat")
+            ts          = self._resolve_per_detector(t,          "t")
+            delta_clips = self._resolve_per_detector(delta_clip, "delta_clip")
+            import numpy as np
+            rng = np.random.default_rng(seed)
+            all_events = []
+            for idx, (sampler, dt, t_, dc) in enumerate(
+                zip(self._samplers, deltats, ts, delta_clips)
+            ):
+                events = sampler.sample_events(
+                    morphology, deltat=dt, nevent=nevent, t=t_,
+                    seed=int(rng.integers(2**32)), delta_clip=dc,
+                )
+                for ev in events:
+                    ev.detector_id = idx
+                all_events.extend(events)
+            return all_events
+        return self._sample_events_single(
+            morphology, deltat=deltat, nevent=nevent, t=t, seed=seed, delta_clip=delta_clip,
+        )
 
     @abstractmethod
+    def _sample_events_single(
+        self,
+        morphology: str,
+        deltat=None,
+        nevent: Optional[int] = None,
+        t: Optional[float] = None,
+        seed=None,
+        delta_clip: tuple = None,
+    ) -> List[Event]:
+        """Single-detector implementation of sample_events.  Override in subclasses."""
+        pass
+
     def expected_events(
         self,
         morphology: str,
-        deltat: float,
+        deltat,
         t: Optional[float] = None,
-    ) -> float:
+    ):
         """Return the expected (mean) number of events for a given livetime.
 
-        Parameters
-        ----------
-        morphology : {"track", "cascade"}
-        deltat : float
-            Observation window in natural units (eV^{-1}).
-        t : float or None
-            Reference epoch in MJD.  Defaults to the sampler's reference epoch.
+        Args:
+            morphology: Event morphology, e.g. "track" or "cascade".
+            deltat: Observation window as a pint Quantity with time units.
+            t: Reference epoch in MJD.  Defaults to the sampler's reference epoch.
 
-        Returns
-        -------
-        float
-            Expected number of events (before Poisson sampling).
+        Returns:
+            Expected number of events (before Poisson sampling).  Returns a list
+            when multi-detector mode is active.
         """
+        if self._multi:
+            deltats = self._resolve_per_detector(deltat, "deltat")
+            ts      = self._resolve_per_detector(t,      "t")
+            return [
+                s._expected_events_single(morphology, dt, t=t_)
+                for s, dt, t_ in zip(self._samplers, deltats, ts)
+            ]
+        return self._expected_events_single(morphology, deltat, t=t)
+
+    @abstractmethod
+    def _expected_events_single(
+        self,
+        morphology: str,
+        deltat,
+        t: Optional[float] = None,
+    ) -> float:
+        """Single-detector implementation of expected_events.  Override in subclasses."""
         pass
 
     def eddington_correction(
@@ -144,24 +196,18 @@ class EventSampler(ABC):
         shift (e.g. HESE tracks, median Δ ≈ −0.65), correction > 1 at low
         reco energies and correction < 1 at high reco energies.
 
-        Parameters
-        ----------
-        morphology : str
-            Event morphology (e.g. ``"astro_track"``).
-        e_bins : array-like
-            Reconstructed energy bin edges in GeV.  Log-spaced bins are
-            recommended.
-        n_pseudo : int
-            Number of pseudo-experiments.  Default 500 gives ~1–2% statistical
-            uncertainty on the correction factors.
-        seed : int
-            Base random seed; each pseudo-experiment uses ``seed + i``.
+        Args:
+            morphology: Event morphology (e.g. "astro_track").
+            e_bins: Reconstructed energy bin edges in GeV.  Log-spaced bins are
+                recommended.
+            n_pseudo: Number of pseudo-experiments.  Default 500 gives ~1–2%
+                statistical uncertainty on the correction factors.
+            seed: Base random seed; each pseudo-experiment uses ``seed + i``.
 
-        Returns
-        -------
-        correction : ndarray, shape (len(e_bins) - 1,)
-            Ratio smeared / unsmeared per bin.  Bins with zero unsmeared
-            counts return ``np.nan``.
+        Returns:
+            ndarray of shape ``(len(e_bins) - 1,)`` with ratio smeared /
+            unsmeared per bin.  Bins with zero unsmeared counts return
+            ``np.nan``.
         """
         e_bins = np.asarray(e_bins, dtype=float)
         smeared   = np.zeros(len(e_bins) - 1)
@@ -189,16 +235,12 @@ class EventSampler(ABC):
     ):
         """Return the expected event rate as a pint Quantity in s^{-1}.
 
-        Parameters
-        ----------
-        morphology : {"track", "cascade"}
-        t : float or None
-            Reference epoch in MJD.
+        Args:
+            morphology: Event morphology, e.g. "track" or "cascade".
+            t: Reference epoch in MJD.
 
-        Returns
-        -------
-        pint.Quantity
-            Event rate with units of 1/s.
+        Returns:
+            Event rate as a pint Quantity with units of 1/s.
         """
         one_second = ureg.Quantity(1.0, "s")
         return ureg.Quantity(
