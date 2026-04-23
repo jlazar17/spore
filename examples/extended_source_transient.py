@@ -19,11 +19,12 @@ from pathlib import Path
 from spore.conventions import ureg
 from spore.detector import Detector
 from spore.source import ExtendedSource
-from spore.event_sampling import ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
 
-RESOURCES = Path(__file__).parent.parent / "resources"
-RESPONSE  = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
-FLUX_FILE = str(Path(__file__).parent / "_transient_flux.h5")
+RESOURCES  = Path(__file__).parent.parent / "resources"
+OUTPUT_DIR = Path(__file__).parent / "output"
+RESPONSE   = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
+FLUX_FILE  = str(OUTPUT_DIR / "_transient_flux.h5")
 
 # ---------------------------------------------------------------------------
 # Build a Gaussian-in-dec extended flux centred on the Galactic Centre
@@ -76,7 +77,7 @@ src = ExtendedSource.from_config({"flux": {"location": f"{FLUX_FILE}:flux"}})
 # actual detector pointing at that instant.
 # ---------------------------------------------------------------------------
 print("Building sampler (transient mode — geometry fixed at t0)...")
-sampler = ExtendedSourceEventSampler(det, src)
+sampler = SourceSampler(det, src)
 
 N_EVENTS = 500
 
@@ -112,7 +113,7 @@ ax.set_ylabel("Events / bin")
 ax.set_title("Reconstructed energy")
 
 plt.tight_layout()
-out = Path(__file__).parent / "extended_source_transient.png"
+out = OUTPUT_DIR / "extended_source_transient.png"
 plt.savefig(out, dpi=150)
 print(f"Plot saved to {out}")
 plt.show()

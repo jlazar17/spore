@@ -11,7 +11,7 @@ The key steps are:
   1. Subclass Distribution and implement density(e, dec, ra).
   2. Build a Flux from that Distribution.
   3. Subclass ExtendedSource, set uses_ra = True, and pass the Flux to super().
-  4. Hand the source to ExtendedSourceEventSampler as usual.
+  4. Hand the source to SourceSampler as usual.
 
 Run from the project root:
     python examples/ra_dependent_extended_source.py
@@ -24,7 +24,7 @@ from scipy.integrate import quad
 
 from spore.conventions import ureg
 from spore.detector.detector import Detector
-from spore.event_sampling import ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
 from spore.physics import neutrinos
 from spore.source.extended_source import ExtendedSource
 from spore.source.flux import Flux
@@ -53,14 +53,23 @@ def _nfw_density(r, rho_s, r_s):
     return rho_s / ((r / r_s) * (1.0 + r / r_s) ** 2)
 
 
+_KPC_TO_CM = 3.0857e21   # cm per kpc
+
+
 def _j_factor(psi, rho_s=0.3, r_s=20.0, r_sun=8.5, d_max_kpc=200.0):
-    """Line-of-sight integral of rho^2 along direction psi from GC [kpc GeV^2 cm^-6]."""
+    """Line-of-sight integral of rho^2 along direction psi from GC [GeV^2 cm^-5].
+
+    The integration variable is in kpc; the result is converted to cm^-5
+    by multiplying by KPC_TO_CM so that the final flux has units of
+    GeV^-1 cm^-2 s^-1 sr^-1 when combined with the (sigma_v / 8 pi m_chi^2)
+    prefactor and the dN/dE spectrum.
+    """
     def integrand(ell):
-        r = np.sqrt(ell**2 + r_sun**2 - 2.0 * ell * r_sun * np.cos(psi))
+        r = np.sqrt(ell**2 + r_sun**2 - 2.0 * ell * r_sun * np.cos(psi)) + 1e-3
         return _nfw_density(r, rho_s, r_s) ** 2
 
     result, _ = quad(integrand, 0.0, d_max_kpc, limit=200)
-    return result
+    return result * _KPC_TO_CM
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +123,7 @@ class NFWAnnihilationSource(ExtendedSource):
     """
     Neutrino source from DM annihilation in an NFW halo.
 
-    Sets uses_ra = True so that ExtendedSourceEventSampler evaluates the flux
+    Sets uses_ra = True so that SourceSampler evaluates the flux
     at every (dec, ra) grid cell rather than broadcasting a dec-only template.
     """
 
@@ -123,7 +132,7 @@ class NFWAnnihilationSource(ExtendedSource):
     def __init__(self, m_chi_gev, sigma_v_cm3s, rho_s=0.3, r_s=20.0, r_sun=8.5, d_max_kpc=200.0):
         prefactor   = sigma_v_cm3s / (8.0 * np.pi * m_chi_gev**2)
         distribution = NFWAnnihilationDistribution(
-            m_chi_gev, emin=0.0, emax=m_chi_gev,
+            m_chi_gev, emin=1e2, emax=m_chi_gev,
             rho_s=rho_s, r_s=r_s, r_sun=r_sun, d_max_kpc=d_max_kpc,
         )
         flux = Flux(
@@ -151,8 +160,9 @@ source  = NFWAnnihilationSource(
     sigma_v_cm3s = 3e-26,  # canonical thermal relic cross section
 )
 
-sampler = ExtendedSourceEventSampler(detector, source, n_dec=20, n_ra=21, n_e=20)
+sampler = SourceSampler(detector, source, n_dec=20, n_ra=21, n_e=20)
 
-T      = ureg.Quantity(10, "year")
+T = ureg.Quantity(10, "year")
+print(f"Expected track events over {T}: {sampler.expected_events('track', T):.1f}")
 events = sampler.sample_events("track", deltat=T)
-print(f"Sampled {len(events)} track events over {T}")
+print(f"Sampled {len(events)} track events")

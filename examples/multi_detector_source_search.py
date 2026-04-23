@@ -3,7 +3,7 @@ Multi-detector point source search example.
 
 Demonstrates how to simulate a joint neutrino search across two detectors —
 a South Polar detector and a Mediterranean detector — by passing a list of
-detectors to PointSourceEventSampler.  Each detector independently Poisson-
+detectors to SourceSampler.  Each detector independently Poisson-
 samples its expected event count; the returned event list is tagged by an
 integer detector index (0 = South Polar, 1 = Mediterranean).
 
@@ -26,9 +26,10 @@ from pathlib import Path
 from spore.conventions import ureg, SkyCoordinate
 from spore.source import PointSource
 from spore.detector import Detector
-from spore.event_sampling import PointSourceEventSampler
+from spore.event_sampling import SourceSampler
 
-RESOURCES = Path(__file__).parent.parent / "resources"
+RESOURCES  = Path(__file__).parent.parent / "resources"
+OUTPUT_DIR = Path(__file__).parent / "output"
 RESPONSE_FILE = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
 
 # ---------------------------------------------------------------------------
@@ -70,7 +71,7 @@ mediterranean_det = Detector.from_config({
 # n_time_samples enables diurnal-average effective area, appropriate for a
 # one-year observation.
 # ---------------------------------------------------------------------------
-sampler = PointSourceEventSampler(
+sampler = SourceSampler(
     [south_pole_det, mediterranean_det],
     source,
     n_time_samples=50,
@@ -109,7 +110,7 @@ for det_id, label in DET_LABELS.items():
 # ---------------------------------------------------------------------------
 # Plots
 # ---------------------------------------------------------------------------
-fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+fig, axes = plt.subplots(1, 4, figsize=(18, 4))
 fig.suptitle("Multi-detector point source simulation (1 year, tracks)")
 
 colors = {0: "steelblue", 1: "tomato"}
@@ -177,8 +178,25 @@ ax.set_ylabel("Angular separation [deg]")
 ax.set_title("True vs. reco direction offset")
 ax.legend(fontsize=8)
 
+# --- Time series: cumulative event count vs. days elapsed ---
+ax = axes[3]
+if events:
+    t0 = min(e.time for e in events)
+    for det_id, label in DET_LABELS.items():
+        det_events = by_detector[det_id]
+        if not det_events:
+            continue
+        days = sorted((e.time - t0) for e in det_events)
+        ax.step(days, np.arange(1, len(days) + 1),
+                where="post", color=colors[det_id], label=label, linewidth=1.5)
+
+ax.set_xlabel("Elapsed time [days]")
+ax.set_ylabel("Cumulative events")
+ax.set_title("Event arrival time series")
+ax.legend(fontsize=8)
+
 plt.tight_layout()
-plot_path = Path(__file__).parent / "multi_detector_example.png"
+plot_path = OUTPUT_DIR / "multi_detector_example.png"
 plt.savefig(plot_path, dpi=150)
 print(f"\nPlot saved to {plot_path}")
 plt.show()

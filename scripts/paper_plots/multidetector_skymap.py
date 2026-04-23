@@ -16,7 +16,7 @@ import h5py as h5
 from spore.conventions import ureg
 from spore.detector import Detector
 from spore.source import ExtendedSource
-from spore.event_sampling import ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
 
 logging.basicConfig(level=logging.INFO)
 
@@ -39,10 +39,10 @@ atmo_src = ExtendedSource.from_config(
     {"flux": {"location": f"{ATM_H5}:mceq_h4a_sibyll23d"}}
 )
 
-ic_quick_atmo_sampler   = ExtendedSourceEventSampler(south_polar, atmo_src, n_dec=100, n_ra=100, n_e=100)
-km3_quick_atmo_sampler  = ExtendedSourceEventSampler(mediterranean,  atmo_src, n_dec=100, n_ra=100, n_e=100)
-ic_steady_atmo_sampler  = ExtendedSourceEventSampler(south_polar, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
-km3_steady_atmo_sampler = ExtendedSourceEventSampler(mediterranean,  atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+ic_quick_atmo_sampler   = SourceSampler(south_polar, atmo_src, n_dec=100, n_ra=100, n_e=100)
+km3_quick_atmo_sampler  = SourceSampler(mediterranean,  atmo_src, n_dec=100, n_ra=100, n_e=100)
+ic_steady_atmo_sampler  = SourceSampler(south_polar, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+km3_steady_atmo_sampler = SourceSampler(mediterranean,  atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
 
 N_EVENTS = 200
 

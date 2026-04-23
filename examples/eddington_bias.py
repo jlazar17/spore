@@ -64,14 +64,19 @@ from spore.conventions import EarthCoordinate, ureg
 from spore.detector import Detector
 from spore.detector.detector_response import DetectorResponse
 from spore.detector.detector import Medium
+from spore.physics import Morphology
 from spore.source import ExtendedSource
 from spore.source.flux import Flux
-from spore.event_sampling import ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
+
+for _morph in ["astro_cascade", "astro_track", "atmo_cascade", "atmo_track", "astro_doublebang"]:
+    Morphology.register(_morph)
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 ROOT            = Path(__file__).parent.parent
+OUTPUT_DIR      = Path(__file__).parent / "output"
 IRF_PATH        = str(ROOT / "resources" / "hese_7yr_detector_response.h5")
 ASTRO_FLUX_PATH = str(ROOT / "resources" / "hese_7yr_astro_flux.h5")
 
@@ -98,7 +103,7 @@ astro_det  = Detector(_ICECUBE, Medium.Ice, _filter(full_response, "astro"))
 astro_flux = Flux.from_config({"location": f"{ASTRO_FLUX_PATH}:astrophysical"})
 
 print("Building sampler ...")
-sampler = ExtendedSourceEventSampler(
+sampler = SourceSampler(
     astro_det, ExtendedSource(astro_flux),
     n_time_samples=100, n_e=60, n_ra=30, n_dec=30,
 )
@@ -228,7 +233,7 @@ ax.set_xlim(e_bins[0], e_bins[-1])
 _add_threshold(ax)
 
 plt.tight_layout()
-out = Path(__file__).parent / "eddington_bias.png"
+out = OUTPUT_DIR / "eddington_bias.png"
 plt.savefig(out, dpi=150)
 print(f"\nPlot saved to {out}")
 plt.show()

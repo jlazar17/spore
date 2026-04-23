@@ -18,7 +18,7 @@ from tqdm import tqdm
 from spore.conventions import ureg, SkyCoordinate
 from spore.detector import Detector
 from spore.source import PointSource, ExtendedSource
-from spore.event_sampling import PointSourceEventSampler, ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
 
 logging.basicConfig(level=logging.INFO)
 
@@ -58,9 +58,9 @@ astro_src = ExtendedSource.from_config({"flux": {"location": f"{COMB_H5}:astroph
 # IC86 10-year livetime (https://arxiv.org/pdf/2211.09972)
 LIVETIME = ureg.Quantity(3_186, "day")
 
-sampler       = PointSourceEventSampler(det, src, n_time_samples=50)
-atmo_sampler  = ExtendedSourceEventSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
-astro_sampler = ExtendedSourceEventSampler(det, astro_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+sampler       = SourceSampler(det, src, n_time_samples=50)
+atmo_sampler  = SourceSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+astro_sampler = SourceSampler(det, astro_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
 
 PSI2_BINS  = np.linspace(-1, 50, 154)
 PSI2_CENTS = (PSI2_BINS[1:] + PSI2_BINS[:-1]) / 2

@@ -21,7 +21,7 @@ from scipy.optimize import minimize
 from spore.conventions import ureg
 from spore.detector import Detector
 from spore.source import ExtendedSource
-from spore.event_sampling import ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
 
 HERE    = os.path.abspath(os.path.dirname(__file__))
 REPO    = os.path.join(HERE, "..", "..")
@@ -104,10 +104,10 @@ if __name__ == "__main__":
     astro_src = ExtendedSource.from_config({"flux": {"location": f"{AST_H5}:astrophysical"}})
 
     atmo_samplers = [
-        ExtendedSourceEventSampler(det, src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+        SourceSampler(det, src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
         for src in atmo_srcs
     ]
-    astro_sampler = ExtendedSourceEventSampler(
+    astro_sampler = SourceSampler(
         det, astro_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100
     )
 
@@ -130,7 +130,7 @@ if __name__ == "__main__":
         for m, n in zip(ATM_FLUX_MODELS, norms)
     ]
     atmo_samplers_fit = [
-        ExtendedSourceEventSampler(det, src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+        SourceSampler(det, src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
         for src in atmo_srcs_fit
     ]
 

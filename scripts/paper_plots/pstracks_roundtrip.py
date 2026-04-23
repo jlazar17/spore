@@ -11,7 +11,7 @@ from scipy.optimize import minimize
 from spore.conventions import SkyCoordinate, ureg
 from spore.detector.detector import Detector
 from spore.source import ExtendedSource
-from spore.event_sampling import ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
 
 HERE    = os.path.abspath(os.path.dirname(__file__))
 REPO    = os.path.join(HERE, "..", "..")
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     N = 40
     norms = []
     atmo_samplers = [
-        ExtendedSourceEventSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+        SourceSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
         for atmo_src in atmo_srcs
     ]
     for atmo_sampler in atmo_samplers:
@@ -114,10 +114,10 @@ if __name__ == "__main__":
     ) for (flux_model, norm) in zip(atmo_flux_models, norms)]
 
     atmo_samplers = [
-        ExtendedSourceEventSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+        SourceSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
         for atmo_src in atmo_srcs
     ]
-    astro_sampler = ExtendedSourceEventSampler(det, astro_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+    astro_sampler = SourceSampler(det, astro_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
 
     h_atmos = np.zeros(e_cents.shape + (4,))
 

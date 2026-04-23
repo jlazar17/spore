@@ -56,7 +56,7 @@ from scipy.interpolate import RegularGridInterpolator, CubicSpline
 from spore.conventions import ureg
 from spore.detector import Detector
 from spore.source import ExtendedSource
-from spore.event_sampling import ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
 from spore.event_sampling.io import write_events
 
 # ---------------------------------------------------------------------------
@@ -64,9 +64,10 @@ from spore.event_sampling.io import write_events
 # ---------------------------------------------------------------------------
 REPO          = Path(__file__).parent.parent
 RESOURCES     = REPO / "resources"
+OUTPUT_DIR    = Path(__file__).parent / "output"
 RESPONSE      = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
-FLUX_FILE     = str(Path(__file__).parent / "_halo_flux.h5")
-JFACTOR_CACHE = str(Path(__file__).parent / "_jfactor_cache.h5")
+FLUX_FILE     = str(OUTPUT_DIR / "_halo_flux.h5")
+JFACTOR_CACHE = str(OUTPUT_DIR / "_jfactor_cache.h5")
 
 # ---------------------------------------------------------------------------
 # Physical constants
@@ -327,8 +328,8 @@ def parse_args():
                         "Default: 3e-26 (thermal relic)")
     p.add_argument("--lifetime",  type=float, default=1e28,
                    help="Decay lifetime tau [s].  Default: 1e28")
-    p.add_argument("--output",    default="halo_events.h5",
-                   help="Output HDF5 file for sampled events.  Default: halo_events.h5")
+    p.add_argument("--output",    default=str(OUTPUT_DIR / "halo_events.h5"),
+                   help="Output HDF5 file for sampled events.  Default: examples/output/halo_events.h5")
     p.add_argument("--n-dec",     type=int, default=40,
                    help="Declination grid points.  Default: 40")
     p.add_argument("--n-ra",      type=int, default=80,
@@ -433,7 +434,7 @@ def main():
     src = ExtendedSource.from_config({"flux": {"location": f"{FLUX_FILE}:dm_line"}})
 
     print("\nBuilding sampler (steady-state mode)...")
-    sampler = ExtendedSourceEventSampler(
+    sampler = SourceSampler(
         det, src,
         n_time_samples=50,
         n_dec=args.n_dec,

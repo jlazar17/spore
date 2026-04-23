@@ -7,14 +7,15 @@ _dm_backup/
 
 # Generated figures and notebooks output
 figures/
-examples/*.png
-examples/*.gif
 paper.mplstyle
+
+# Example outputs (generated at runtime; directory is tracked via .gitkeep)
+examples/output/*
+!examples/output/.gitkeep
 
 # Generated/cached HDF5 artifacts
 resources/plotting_data.h5
 resources/example_detector_response_old.h5
-examples/_*.h5
 
 # Data releases (large, not distributed with the package)
 resources/data_releases/*/

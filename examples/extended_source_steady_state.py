@@ -21,11 +21,12 @@ from pathlib import Path
 from spore.conventions import ureg
 from spore.detector import Detector
 from spore.source import ExtendedSource
-from spore.event_sampling import ExtendedSourceEventSampler
+from spore.event_sampling import SourceSampler
 
-RESOURCES = Path(__file__).parent.parent / "resources"
-RESPONSE  = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
-FLUX_FILE = str(Path(__file__).parent / "_steady_state_flux.h5")
+RESOURCES  = Path(__file__).parent.parent / "resources"
+OUTPUT_DIR = Path(__file__).parent / "output"
+RESPONSE   = str(RESOURCES / "configs" / "ps10yr_detector_response.h5")
+FLUX_FILE  = str(OUTPUT_DIR / "_steady_state_flux.h5")
 
 # ---------------------------------------------------------------------------
 # Isotropic E^-2 flux, equal for NuMu and NuMuBar.
@@ -72,7 +73,7 @@ src = ExtendedSource.from_config({"flux": {"location": f"{FLUX_FILE}:flux"}})
 # of the effective area over a full diurnal cycle.
 # ---------------------------------------------------------------------------
 print("Building sampler (steady-state mode — A_eff averaged over diurnal cycle)...")
-sampler = ExtendedSourceEventSampler(
+sampler = SourceSampler(
     det, src,
     n_time_samples=100,
 )
@@ -108,7 +109,7 @@ ax.set_ylabel("Events / bin")
 ax.set_title("Reconstructed energy spectrum")
 
 plt.tight_layout()
-out = Path(__file__).parent / "extended_source_steady_state.png"
+out = OUTPUT_DIR / "extended_source_steady_state.png"
 plt.savefig(out, dpi=150)
 print(f"Plot saved to {out}")
 plt.show()
