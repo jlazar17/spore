@@ -47,9 +47,9 @@ from scipy.interpolate import RegularGridInterpolator
 _HERE   = os.path.dirname(os.path.abspath(__file__))
 _ROOT   = os.path.join(_HERE, "..")
 
-_DEFAULT_DATA_DIR = os.path.expanduser(
-    "~/research/CATHODE/HeseCathode/data/"
-    "HESE-7-year-data-release-main/HESE-7-year-data-release/resources/data"
+_DEFAULT_DATA_DIR = os.path.join(
+    _HERE, "..", "resources", "data_releases",
+    "hese_7yr_data_release", "resources", "data",
 )
 DATA_DIR = os.environ.get("HESE_DATA_DIR", _DEFAULT_DATA_DIR)
 OUT_FILE = os.path.join(_ROOT, "resources", "hese_7yr_atmo_flux.h5")

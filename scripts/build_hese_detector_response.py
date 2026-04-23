@@ -88,19 +88,17 @@ _MORPH_PTYPES = {
 # ---------------------------------------------------------------------------
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-_DEFAULT_DATA_DIR = os.path.expanduser(
-    "~/research/CATHODE/HeseCathode/data/"
-    "HESE-7-year-data-release-main/HESE-7-year-data-release/resources/data"
+_DEFAULT_DATA_DIR = os.path.join(
+    _HERE, "..", "resources", "data_releases",
+    "hese_7yr_data_release", "resources", "data",
 )
 DATA_DIR = os.environ.get("HESE_DATA_DIR", _DEFAULT_DATA_DIR)
 OUT_FILE = os.path.join(_HERE, "..", "resources", "hese_7yr_detector_response.h5")
 
 # ---------------------------------------------------------------------------
-# Unit conversion constants  (mirror of spore/conventions/units.py)
+# Unit conversion constants
 # ---------------------------------------------------------------------------
 _EV_PER_GEV     = 1.0e9
-_CM_IN_EV_INV   = 8065.54815355
-_CM2_IN_EV2_INV = _CM_IN_EV_INV ** 2
 
 # ---------------------------------------------------------------------------
 # Grid parameters
@@ -213,7 +211,7 @@ def build_aeff(
     aeff_cm2 = H / (delta_e_gev[:, np.newaxis] * 2 * np.pi * delta_cos_zen[np.newaxis, :])
     aeff_cm2 = np.where(np.isfinite(aeff_cm2) & (aeff_cm2 > 0), aeff_cm2, 0.0)
 
-    return aeff_cm2 * _CM2_IN_EV2_INV
+    return aeff_cm2
 
 
 def build_aeff_per_species(
@@ -227,7 +225,7 @@ def build_aeff_per_species(
     veto_weights: np.ndarray = None,
 ) -> np.ndarray:
     """
-    Build per-species A_eff(species, E, zenith) in eV^-2.
+    Build per-species A_eff(species, E, zenith) in cm^2.
 
     Only includes species in ``_MORPH_PTYPES[morph_label]`` to avoid noisy
     estimates from MC events of minor species (e.g. NuE events that happen to
@@ -236,7 +234,7 @@ def build_aeff_per_species(
     Returns
     -------
     ndarray, shape (6, N_E, N_ZEN)
-        Per-species effective areas ordered by SPORE species index
+        Per-species effective areas in cm^2, ordered by SPORE species index
         (NuE=0, NuEbar=1, NuMu=2, NuMuBar=3, NuTau=4, NuTauBar=5).
         Species not in the dominant set are zero.
     """
@@ -575,7 +573,7 @@ def main():
 
     sin_w = np.sin(zeniths); sin_w /= sin_w.sum()
 
-    def _expected_astro(aeff_6sp_eV2):
+    def _expected_astro(aeff_6sp_cm2):
         """Compute expected astro events: N = T × Σ_sp ∫ A_eff_sp × phi_per_sp dE dΩ."""
         # Each species: sky-average over zenith, sum over energy
         phi_per_sp = phi0 * (energies_gev / e_pivot) ** (-gamma)
@@ -583,8 +581,8 @@ def main():
         total = 0.0
         for sp_idx in range(6):
             aeff_cm2_avg = (
-                aeff_6sp_eV2[sp_idx] * sin_w[np.newaxis, :]
-            ).sum(axis=1) / _CM2_IN_EV2_INV   # (N_E,) sky-averaged
+                aeff_6sp_cm2[sp_idx] * sin_w[np.newaxis, :]
+            ).sum(axis=1)   # (N_E,) sky-averaged
             total += float((aeff_cm2_avg * phi_per_sp * 4 * np.pi * de * T_sec).sum())
         return total
 

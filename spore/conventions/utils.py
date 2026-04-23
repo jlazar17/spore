@@ -8,45 +8,6 @@ from astropy import units as u
 from ..conventions import SkyCoordinate, LocalCoordinate, EarthCoordinate
 
 
-def resolve_path(path: str, toml_dir: str) -> str:
-    """
-    Resolve a path referenced inside a TOML file.
-
-    Resolution order:
-    1. Relative to the directory containing the TOML file.
-    2. Relative to the current working directory.
-    3. As an absolute path (or already-absolute path passed through directly).
-
-    Parameters
-    ----------
-    path : str
-        The raw path string from the TOML value.
-    toml_dir : str
-        Absolute path to the directory containing the TOML file.
-
-    Returns
-    -------
-    str
-        The resolved absolute path.
-
-    Raises
-    ------
-    FileNotFoundError
-        If none of the three candidates exist on disk.
-    """
-    candidates = [
-        os.path.join(toml_dir, path),
-        os.path.join(os.getcwd(), path),
-        path,
-    ]
-    for candidate in candidates:
-        if os.path.exists(candidate):
-            return os.path.abspath(candidate)
-    raise FileNotFoundError(
-        f"Could not resolve path {path!r}.\nTried:\n"
-        + "\n".join(f"  {c}" for c in candidates)
-    )
-
 def sky_to_local(
     sc: SkyCoordinate,
     ec: EarthCoordinate,

@@ -30,7 +30,8 @@ lists, effective area tables, and 5D smearing matrices.
 
 **Directory:** `resources/data_releases/hese_7yr_data_release/`
 
-**Used by:** (reference scripts in `scratch/`)
+**Used by:** `scripts/build_hese_detector_response.py`,
+`scripts/build_hese_atmospheric_flux.py`
 
 **Description:** IceCube 7.5-year High-Energy Starting Events (HESE) data
 release.  Contains event data, instrument response functions, and
