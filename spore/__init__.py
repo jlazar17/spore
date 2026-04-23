@@ -7,7 +7,12 @@ from .physics import Morphology, neutrinos
 from .detector import Detector
 from .source import PointSource, ExtendedSource
 from .source.flux.flux import Flux
-from .event_sampling import PointSourceEventSampler, ExtendedSourceEventSampler
+from .event_sampling import (
+    PointSourceEventSampler,
+    ExtendedSourceEventSampler,
+    SourceSampler,
+    GoodRunList,
+)
 
 __all__ = [
     "Detector",
@@ -15,10 +20,12 @@ __all__ = [
     "ExtendedSource",
     "ExtendedSourceEventSampler",
     "Flux",
+    "GoodRunList",
     "Morphology",
     "PointSource",
     "PointSourceEventSampler",
     "SkyCoordinate",
+    "SourceSampler",
     "neutrinos",
     "ureg",
 ]

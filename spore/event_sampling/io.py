@@ -36,6 +36,7 @@ _FLOAT_COLS = (
     "reco_dec", "reco_ra",
     "true_energy", "reco_energy",
     "time", "ang_err",
+    "zenith", "azimuth",
 )
 _STR_COLS = ("morphology", "detector_id")
 
@@ -119,6 +120,8 @@ def read_events(path: str, group: str = "events"):
         reco_energies = gp["reco_energy"][:]
         times         = gp["time"][:]
         ang_errs      = gp["ang_err"][:] if "ang_err" in gp else np.zeros(n)
+        zeniths       = gp["zenith"][:]   if "zenith"  in gp else np.full(n, np.nan)
+        azimuths      = gp["azimuth"][:]  if "azimuth" in gp else np.full(n, np.nan)
         morphologies  = gp["morphology"][:]
         detector_ids  = gp["detector_id"][:]
 
@@ -143,5 +146,7 @@ def read_events(path: str, group: str = "events"):
             morphology=_decode(morphologies[i]),
             detector_id=_decode_id(detector_ids[i]),
             ang_err=float(ang_errs[i]),
+            zenith=float(zeniths[i]),
+            azimuth=float(azimuths[i]),
         ))
     return events

@@ -9,7 +9,11 @@ from ..detector import Detector
 
 from .event import Event
 from .event_sampler import EventSampler
-from .utils import smear_truth_batch, build_adaptive_log_energy_grid, _effa_grid_steady_state
+from .utils import (
+    smear_truth_batch, build_adaptive_log_energy_grid,
+    _effa_grid_from_lst, _mjd_to_lst, _assign_times_from_slices, _SIDEREAL_DAY,
+    _local_zeniths_from_times, _local_coords_from_times,
+)
 
 
 class PointSourceEventSampler(EventSampler):
@@ -105,14 +109,6 @@ class PointSourceEventSampler(EventSampler):
         self._es = np.clip(np.exp(log_es), _e_min, _e_max)
         self._cache = {}
 
-    def _ha_averaged_effa(self, morphology: str) -> np.ndarray:
-        """Return the hour-angle averaged effective area on self._es."""
-        dec = self._src.location.declination
-        effa_fn = self._det.response.effective_area[morphology]
-        return _effa_grid_steady_state(
-            np.array([dec]), self._det.location, effa_fn, self._es, self._n_time_samples
-        )[0]
-
     def _build_cdf(self, morphology: str, effas: np.ndarray):
         """Build and cache the (spline, norm) pair for the given effective areas."""
         if Morphology.flavor_set(morphology) == "numu":
@@ -171,13 +167,37 @@ class PointSourceEventSampler(EventSampler):
             return
 
         if self._steady_state:
-            effas = self._ha_averaged_effa(morphology)
+            lat    = self._det.location.latitude
+            dec    = self._src.location.declination
+            ra_src = self._src.location.right_ascension
+            effa_fn = self._det.response.effective_area[morphology]
+            has     = np.linspace(0, 2 * np.pi, self._n_time_samples, endpoint=False)
+            slice_cdfs, norms = [], []
+            for ha in has:
+                zen = float(np.arccos(np.clip(
+                    np.sin(lat) * np.sin(dec) + np.cos(lat) * np.cos(dec) * np.cos(ha),
+                    -1.0, 1.0,
+                )))
+                effas = effa_fn(np.full(len(self._es), zen), self._es)
+                spl, norm = self._build_cdf(morphology, effas)
+                slice_cdfs.append(spl)
+                norms.append(norm)
+            norms   = np.array(norms)
+            total   = norms.sum()
+            weights = norms / total if total > 0 else np.ones(len(norms)) / len(norms)
+            self._cache[cache_key] = {
+                "slice_cdfs": slice_cdfs,
+                "norms":      norms,
+                "weights":    weights,
+                "norm":       float(norms.mean()),
+                # RA of the source — used to convert LST to hour angle for GRL mode.
+                "_ra_src":    ra_src,
+            }
         else:
             lc = sky_to_local(self._src.location, self._det.location, t)
             effa_fn = self._det.response.effective_area[morphology]
             effas = effa_fn(np.full(len(self._es), lc.zenith), self._es)
-
-        self._cache[cache_key] = self._build_cdf(morphology, effas)
+            self._cache[cache_key] = self._build_cdf(morphology, effas)
 
     def _get_cached(self, morphology: str, t: float):
         cache_key = morphology if self._steady_state else (t, morphology)
@@ -197,7 +217,8 @@ class PointSourceEventSampler(EventSampler):
                 f"Available: {self._det.response.available_morphologies}."
             )
         self._ensure_cached(morphology, t)
-        _, norm = self._get_cached(morphology, t)
+        cached = self._get_cached(morphology, t)
+        norm = cached["norm"] if isinstance(cached, dict) else cached[1]
         return norm * deltat.to('s').magnitude
 
     def _sample_events_single(
@@ -208,6 +229,7 @@ class PointSourceEventSampler(EventSampler):
         t: Optional[float] = None,
         seed=None,
         delta_clip: tuple = None,
+        grl=None,
     ):
         """Draw reconstructed events from the point source (single-detector).
 
@@ -253,36 +275,81 @@ class PointSourceEventSampler(EventSampler):
             t = self._t0
 
         self._ensure_cached(morphology, t)
-        spl, norm = self._get_cached(morphology, t)
+        cached = self._get_cached(morphology, t)
 
-        if nevent is None:
-            nevent = rng.poisson(norm * deltat.to('s').magnitude)
+        if isinstance(cached, dict):
+            # Steady-state: per-slice CDFs.
+            slice_cdfs = cached["slice_cdfs"]
+            weights    = cached["weights"]
+            n_slices   = len(slice_cdfs)
+            mean_norm  = cached["norm"]
+            ra_src     = cached["_ra_src"]
 
-        if nevent == 0 or spl is None:
-            return []
+            if nevent is None:
+                nevent = rng.poisson(mean_norm * deltat.to('s').magnitude)
+            if nevent == 0:
+                return []
 
-        true_energies  = np.exp(spl(rng.random(nevent)))
+            if grl is not None:
+                # Draw times from GRL, derive slice index from hour angle at each time.
+                event_times = grl.sample_times(nevent, rng)
+                lon  = self._det.location.longitude
+                lsts = _mjd_to_lst(event_times, lon)
+                ha   = (lsts - ra_src) % (2 * np.pi)
+                k_arr = (ha / (2 * np.pi) * n_slices).astype(int) % n_slices
+            else:
+                k_arr = rng.choice(n_slices, size=nevent, p=weights)
+                if deltat is not None:
+                    event_times = _assign_times_from_slices(t, deltat, k_arr, n_slices, rng)
+                else:
+                    event_times = np.full(nevent, t)
+
+            true_energies = np.empty(nevent)
+            for k in range(n_slices):
+                mask = k_arr == k
+                n_k  = int(mask.sum())
+                if n_k == 0:
+                    continue
+                spl_k = slice_cdfs[k]
+                true_energies[mask] = (
+                    np.exp(spl_k(rng.random(n_k))) if spl_k is not None
+                    else np.full(n_k, self._es[0])
+                )
+        else:
+            # Snapshot mode: single CDF.
+            spl, norm = cached
+            if nevent is None:
+                nevent = rng.poisson(norm * deltat.to('s').magnitude)
+            if nevent == 0 or spl is None:
+                return []
+            true_energies = np.exp(spl(rng.random(nevent)))
+            if grl is not None:
+                event_times = grl.sample_times(nevent, rng)
+            elif deltat is not None:
+                event_times = t + rng.uniform(0.0, deltat.to('day').magnitude, nevent)
+            else:
+                event_times = np.full(nevent, t)
+
         true_direction = self._src.location
         true_decs = np.full(nevent, true_direction.declination)
         true_ras  = np.full(nevent, true_direction.right_ascension)
+        local_zeniths, local_azimuths = _local_coords_from_times(
+            event_times, true_decs, true_ras,
+            self._det.location.latitude, self._det.location.longitude,
+        )
         reco_decs, reco_ras, reco_energies, ang_errs = smear_truth_batch(
             true_decs, true_ras, true_energies, self._det, morphology, rng=rng,
-            delta_clip=delta_clip,
+            delta_clip=delta_clip, local_zeniths=local_zeniths,
         )
-        if deltat is not None:
-            deltat_days = deltat.to('day').magnitude
-            event_times = t + rng.uniform(0.0, deltat_days, nevent)
-        else:
-            event_times = np.full(nevent, t)
         return [
             Event(
                 true_direction,
                 SkyCoordinate(rd, rr),
-                te,
-                re,
-                et,
-                morphology,
-                ang_err=ae,
+                te, re, et, morphology, ang_err=ae,
+                zenith=ze, azimuth=az,
             )
-            for rd, rr, te, re, et, ae in zip(reco_decs, reco_ras, true_energies, reco_energies, event_times, ang_errs)
+            for rd, rr, te, re, et, ae, ze, az in zip(
+                reco_decs, reco_ras, true_energies, reco_energies, event_times, ang_errs,
+                local_zeniths, local_azimuths,
+            )
         ]

@@ -14,7 +14,9 @@ from .event_sampler import EventSampler
 from .event import Event
 from .utils import (
     smear_truth_batch, zenith_grid, _build_sampling_data,
-    build_adaptive_log_energy_grid, _effa_grid_steady_state,
+    build_adaptive_log_energy_grid,
+    _effa_grid_from_lst, _sample_from_slice, _assign_times_from_slices, _mjd_to_lst,
+    _local_zeniths_from_times, _local_coords_from_times,
 )
 
 
@@ -203,59 +205,71 @@ class ExtendedSourceEventSampler(EventSampler):
                     fluxes[idx, jdx, :] = src(nu, es, dec, 0.0)
 
         # --- effective-area and sampling tables per available morphology ---
-        # Compute the zenith grid once for transient mode — it's the same for
-        # every morphology and every species, so there is no reason to repeat
-        # the expensive astropy coordinate transform inside the loop.
+        # Snapshot mode: compute the zenith grid once (same for every morphology
+        # and species) to avoid repeating the expensive astropy transform.
         if not self._steady_state:
-            _zeniths = zenith_grid(decs, ras, det.location, self._t0)
+            _zeniths  = zenith_grid(decs, ras, det.location, self._t0)
             _zen_flat = np.repeat(_zeniths.ravel(), n_e)
             _e_flat   = np.tile(es, n_dec * n_ra)
-        else:
-            _zen_flat = _e_flat = None
+
+        lat = det.location.latitude
 
         self._d = {}
         for morph, effa in det.response.effective_area.items():
-            if isinstance(effa, list):
-                # Per-species A_effs: target = Σ_sp A_eff_sp × phi_sp
-                # Correctly handles non-democratic fluxes (e.g. Honda+Gaisser)
-                # where different species have very different detection efficiencies.
-                target = np.zeros((n_dec, n_ra, n_e))
-                for sp_idx, effa_sp in enumerate(effa):
-                    if self._steady_state:
-                        avg_sp = _effa_grid_steady_state(
-                            decs, det.location, effa_sp, es, n_time_samples
-                        )
-                        grid_sp = avg_sp[:, np.newaxis, :]
+            if self._steady_state:
+                # Build one sampling grid per LST slice so that each sampled
+                # event is consistent with the instantaneous field of view at
+                # the time it is assigned.
+                lsts = np.linspace(0, 2 * np.pi, n_time_samples, endpoint=False)
+                slice_data = []
+                logger.info(
+                    "Building steady-state grid for '%s': %d LST slices × "
+                    "%d dec × %d RA × %d energy points",
+                    morph, n_time_samples, n_dec, n_ra, n_e,
+                )
+                for lst in lsts:
+                    if isinstance(effa, list):
+                        target_k = np.zeros((n_dec, n_ra, n_e))
+                        for sp_idx, effa_sp in enumerate(effa):
+                            grid_sp   = _effa_grid_from_lst(decs, ras, lat, effa_sp, es, lst)
+                            flux_slice = fluxes[sp_idx] if _uses_ra else fluxes[sp_idx, :, np.newaxis, :]
+                            target_k  += grid_sp * flux_slice
                     else:
-                        grid_sp = effa_sp(_zen_flat, _e_flat).reshape(n_dec, n_ra, n_e)
-                    flux_slice = fluxes[sp_idx] if _uses_ra else fluxes[sp_idx, :, np.newaxis, :]
-                    target += grid_sp * flux_slice
-            else:
-                # Legacy single A_eff: assumes species-independent detection.
-                # Valid for democratic fluxes (astrophysical power law) but not
-                # for atmospheric fluxes with unequal species contributions.
-                grid = np.zeros((n_dec, n_ra, n_e))
-                if self._steady_state:
-                    avg = _effa_grid_steady_state(
-                        decs, det.location, effa, es, n_time_samples
+                        grid_k = _effa_grid_from_lst(decs, ras, lat, effa, es, lst)
+                        if Morphology.flavor_set(morph) == "numu":
+                            flux_contrib = fluxes[2] + fluxes[3]
+                        else:
+                            flux_contrib = fluxes.sum(axis=0)
+                        target_k = grid_k * (flux_contrib if _uses_ra else flux_contrib[:, np.newaxis, :])
+                    slice_data.append(
+                        _build_sampling_data(target_k, es, log_es, sds, sd_edges, ra_edges, le_edges)
                     )
-                    grid[:] = avg[:, np.newaxis, :]
+                norms  = np.array([d["norm"] for d in slice_data])
+                total  = norms.sum()
+                self._d[morph] = {
+                    "slices":  slice_data,
+                    "norms":   norms,
+                    "weights": norms / total if total > 0 else np.ones(n_time_samples) / n_time_samples,
+                    "norm":    float(norms.mean()),
+                }
+            else:
+                # Snapshot mode: single grid at the reference epoch.
+                if isinstance(effa, list):
+                    target = np.zeros((n_dec, n_ra, n_e))
+                    for sp_idx, effa_sp in enumerate(effa):
+                        grid_sp    = effa_sp(_zen_flat, _e_flat).reshape(n_dec, n_ra, n_e)
+                        flux_slice = fluxes[sp_idx] if _uses_ra else fluxes[sp_idx, :, np.newaxis, :]
+                        target    += grid_sp * flux_slice
                 else:
                     grid = effa(_zen_flat, _e_flat).reshape(n_dec, n_ra, n_e)
-
-                if Morphology.flavor_set(morph) == "numu":
-                    flux_contrib = fluxes[2] + fluxes[3]
-                else:
-                    flux_contrib = fluxes.sum(axis=0)
-
-                if _uses_ra:
-                    target = grid * flux_contrib
-                else:
-                    target = grid * flux_contrib[:, np.newaxis, :]
-
-            self._d[morph] = _build_sampling_data(
-                target, es, log_es, sds, sd_edges, ra_edges, le_edges
-            )
+                    if Morphology.flavor_set(morph) == "numu":
+                        flux_contrib = fluxes[2] + fluxes[3]
+                    else:
+                        flux_contrib = fluxes.sum(axis=0)
+                    target = grid * (flux_contrib if _uses_ra else flux_contrib[:, np.newaxis, :])
+                self._d[morph] = _build_sampling_data(
+                    target, es, log_es, sds, sd_edges, ra_edges, le_edges
+                )
 
     def _expected_events_single(
         self,
@@ -278,6 +292,7 @@ class ExtendedSourceEventSampler(EventSampler):
         t: Optional[float] = None,
         seed=None,
         delta_clip: tuple = None,
+        grl=None,
     ):
         """Draw a set of reconstructed events from the source (single-detector).
 
@@ -334,68 +349,95 @@ class ExtendedSourceEventSampler(EventSampler):
         if n == 0:
             return []
 
-        cdf_dec            = d["cdf_dec"]
-        cdf_e_given_dec    = d["cdf_e_given_dec"]
-        cdf_ra_given_dec_e = d["cdf_ra_given_dec_e"]
-        sd_edges           = d["sd_edges"]
-        ra_edges           = d["ra_edges"]
-        le_edges           = d["le_edges"]
+        if self._steady_state and "slices" in d:
+            # --- Time-slice steady-state sampling ---
+            # Each event is assigned to a sidereal-phase slice; position and
+            # energy are drawn from that slice's instantaneous sensitivity grid
+            # so the sky direction is consistent with the field of view at the
+            # assigned time.
+            slice_data = d["slices"]
+            weights    = d["weights"]
+            n_slices   = len(slice_data)
 
-        n_dec = len(cdf_dec)
-        n_e   = cdf_e_given_dec.shape[1]
-        n_ra  = cdf_ra_given_dec_e.shape[2]
+            if grl is not None:
+                # Draw times first, derive slice indices from LST so position
+                # sampling matches the actual observing conditions.
+                event_times = grl.sample_times(n, rng)
+                lon   = self._det.location.longitude
+                lsts  = _mjd_to_lst(event_times, lon)
+                k_arr = (lsts / (2 * np.pi) * n_slices).astype(int) % n_slices
+            else:
+                k_arr = rng.choice(n_slices, size=n, p=weights)
+                if deltat is not None:
+                    event_times = _assign_times_from_slices(t, deltat, k_arr, n_slices, rng)
+                else:
+                    event_times = np.full(n, t)
 
-        # --- Step 1: sample sin_dec bins from the marginal CDF ---
-        i_dec = np.clip(
-            np.searchsorted(cdf_dec, rng.random(n)),
-            0, n_dec - 1,
-        )
-
-        # --- Step 2: sample log_E bins from the conditional CDF given sin_dec ---
-        cdfs_e = cdf_e_given_dec[i_dec]          # (n, n_e)
-        i_e = np.clip(
-            np.argmax(cdfs_e >= rng.random(n)[:, None], axis=1),
-            0, n_e - 1,
-        )
-
-        # --- Step 3: sample RA bins from the conditional CDF given (sin_dec, log_E) ---
-        cdfs_ra = cdf_ra_given_dec_e[i_dec, i_e]  # (n, n_ra)
-        i_ra = np.clip(
-            np.argmax(cdfs_ra >= rng.random(n)[:, None], axis=1),
-            0, n_ra - 1,
-        )
-
-        # --- Step 4: jitter uniformly within each selected cell ---
-        sin_dec = rng.uniform(sd_edges[i_dec],     sd_edges[i_dec + 1])
-        ra      = rng.uniform(ra_edges[i_ra],      ra_edges[i_ra + 1])
-        log_e   = rng.uniform(le_edges[i_e],       le_edges[i_e + 1])
-
-        # RA rotation for Earth's rotation since t0
-        offset = 2.0 * np.pi * ((t - self._t0) % 1)
-        ra = np.mod(ra + offset, 2.0 * np.pi)
-
-        true_decs_arr     = np.arcsin(np.clip(sin_dec, -1.0, 1.0))
-        true_energies_arr = np.exp(log_e)
-        reco_decs, reco_ras, reco_energies, ang_errs = smear_truth_batch(
-            true_decs_arr, ra, true_energies_arr, self._det, morphology, rng=rng,
-            delta_clip=delta_clip,
-        )
-        if deltat is not None:
-            deltat_days = deltat.to('day').magnitude
-            event_times = t + rng.uniform(0.0, deltat_days, n)
+            sin_dec_arr = np.empty(n)
+            ra_arr      = np.empty(n)
+            log_e_arr   = np.empty(n)
+            for k in range(n_slices):
+                mask = k_arr == k
+                n_k  = int(mask.sum())
+                if n_k == 0:
+                    continue
+                sd_k, ra_k, le_k = _sample_from_slice(slice_data[k], n_k, rng)
+                sin_dec_arr[mask] = sd_k
+                ra_arr[mask]      = ra_k
+                log_e_arr[mask]   = le_k
         else:
-            event_times = np.full(n, t)
+            # --- Snapshot mode ---
+            cdf_dec            = d["cdf_dec"]
+            cdf_e_given_dec    = d["cdf_e_given_dec"]
+            cdf_ra_given_dec_e = d["cdf_ra_given_dec_e"]
+            sd_edges           = d["sd_edges"]
+            ra_edges           = d["ra_edges"]
+            le_edges           = d["le_edges"]
+
+            n_dec = len(cdf_dec)
+            n_e   = cdf_e_given_dec.shape[1]
+            n_ra  = cdf_ra_given_dec_e.shape[2]
+
+            i_dec = np.clip(np.searchsorted(cdf_dec, rng.random(n)), 0, n_dec - 1)
+            cdfs_e = cdf_e_given_dec[i_dec]
+            i_e = np.clip(np.argmax(cdfs_e >= rng.random(n)[:, None], axis=1), 0, n_e - 1)
+            cdfs_ra = cdf_ra_given_dec_e[i_dec, i_e]
+            i_ra = np.clip(np.argmax(cdfs_ra >= rng.random(n)[:, None], axis=1), 0, n_ra - 1)
+
+            sin_dec_arr = rng.uniform(sd_edges[i_dec], sd_edges[i_dec + 1])
+            ra_arr      = rng.uniform(ra_edges[i_ra],  ra_edges[i_ra  + 1])
+            log_e_arr   = rng.uniform(le_edges[i_e],   le_edges[i_e   + 1])
+
+            offset  = 2.0 * np.pi * ((t - self._t0) % 1)
+            ra_arr  = np.mod(ra_arr + offset, 2.0 * np.pi)
+
+            if grl is not None:
+                event_times = grl.sample_times(n, rng)
+            elif deltat is not None:
+                event_times = t + rng.uniform(0.0, deltat.to('day').magnitude, n)
+            else:
+                event_times = np.full(n, t)
+
+        true_decs_arr     = np.arcsin(np.clip(sin_dec_arr, -1.0, 1.0))
+        true_energies_arr = np.exp(log_e_arr)
+        local_zeniths, local_azimuths = _local_coords_from_times(
+            event_times, true_decs_arr, ra_arr,
+            self._det.location.latitude, self._det.location.longitude,
+        )
+        reco_decs, reco_ras, reco_energies, ang_errs = smear_truth_batch(
+            true_decs_arr, ra_arr, true_energies_arr, self._det, morphology, rng=rng,
+            delta_clip=delta_clip, local_zeniths=local_zeniths,
+        )
         return [
             Event(
                 SkyCoordinate(td, tr),
                 SkyCoordinate(rd, rr),
-                te,
-                re,
-                et,
-                morphology,
-                ang_err=ae,
+                te, re, et, morphology, ang_err=ae,
+                zenith=ze, azimuth=az,
             )
-            for td, tr, rd, rr, te, re, et, ae in zip(
-                true_decs_arr, ra, reco_decs, reco_ras, true_energies_arr, reco_energies, event_times, ang_errs
+            for td, tr, rd, rr, te, re, et, ae, ze, az in zip(
+                true_decs_arr, ra_arr, reco_decs, reco_ras,
+                true_energies_arr, reco_energies, event_times, ang_errs,
+                local_zeniths, local_azimuths,
             )
         ]

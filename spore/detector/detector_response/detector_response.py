@@ -251,9 +251,13 @@ def ang_spline_from_group(gp: h5.Group) -> Callable:
     u_max = float(i.grid[1][-1])
 
     def fxn(e, u):
-        log_e = float(np.clip(np.log(e), e_log_min, e_log_max))
-        u_c   = float(np.clip(u, u_min, u_max))
-        return float(i((log_e, u_c)))
+        e_arr = np.asarray(e, dtype=float)
+        u_arr = np.asarray(u, dtype=float)
+        scalar = e_arr.ndim == 0 and u_arr.ndim == 0
+        log_e = np.clip(np.log(e_arr.ravel()), e_log_min, e_log_max)
+        u_c   = np.clip(u_arr.ravel(), u_min, u_max)
+        result = i(np.column_stack([log_e, u_c]))
+        return float(result[0]) if scalar else result
     return fxn
 
 def energy_spline_from_group(gp: h5.Group) -> Callable:
@@ -580,4 +584,43 @@ def _build_smearing_sampler(data: dict) -> Callable:
 
         return reco_energy, psi_rad, ae_rad
 
+    def sample_batch(true_energies_GeV, zenith_rads, rng=None):
+        """Vectorized batch sampler. Returns plain numpy arrays (no pint units)."""
+        _rng = rng if rng is not None else np.random.default_rng()
+        N = len(true_energies_GeV)
+
+        i_et = np.clip(
+            np.searchsorted(etrue_edges[1:], np.log10(true_energies_GeV)),
+            0, n_et - 1,
+        )
+        i_dc = np.clip(
+            np.searchsorted(zenith_edges[1:], np.degrees(zenith_rads)),
+            0, n_dec - 1,
+        )
+
+        u = _rng.random(N)
+        idx_flat = np.empty(N, dtype=int)
+
+        # Group events by (i_et, i_dc) bin — at most n_et*n_dec unique pairs.
+        # Each group shares the same CDF row, so searchsorted is vectorised
+        # within the group rather than once per event.
+        key = i_et * n_dec + i_dc
+        for k_val in np.unique(key):
+            mask = key == k_val
+            ie = int(k_val // n_dec)
+            id_ = int(k_val % n_dec)
+            idx_flat[mask] = np.searchsorted(cum[ie, id_], u[mask])
+
+        idx_flat = np.minimum(idx_flat, n_er * n_psf * n_ae - 1)
+        i_er, i_ps, i_ae = np.unravel_index(idx_flat, (n_er, n_psf, n_ae))
+
+        log10e_r = _rng.uniform(er_lo[i_et, i_dc, i_er], er_hi[i_et, i_dc, i_er])
+        reco_energies = 10.0 ** log10e_r  # GeV, plain float64
+
+        psi_rad = np.radians(_rng.uniform(p_lo[i_et, i_dc, i_ps], p_hi[i_et, i_dc, i_ps]))
+        ae_rad  = np.radians(_rng.uniform(ae_lo[i_et, i_dc, i_ae], ae_hi[i_et, i_dc, i_ae]))
+
+        return reco_energies, psi_rad, ae_rad
+
+    sample.batch = sample_batch
     return sample

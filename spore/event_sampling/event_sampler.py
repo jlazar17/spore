@@ -10,6 +10,7 @@ from ..conventions import ureg
 from ..source import Source
 from ..detector import Detector
 from .event import Event
+from .good_run_list import GoodRunList
 
 _STEADY_STATE_THRESHOLD = ureg.Quantity(15.0, "min")
 
@@ -51,6 +52,16 @@ class EventSampler(ABC):
             return value
         return [value] * n
 
+    def _resolve_grl(self, grl, deltat):
+        """Coerce *grl* to a GoodRunList (if not already one) and validate exclusivity."""
+        if grl is None:
+            return None
+        if deltat is not None:
+            raise ValueError("Specify at most one of deltat and grl, not both.")
+        if not isinstance(grl, GoodRunList):
+            grl = GoodRunList.from_path(grl)
+        return grl
+
     def _check_steady_state(self, deltat) -> None:
         """Warn if a long deltat is used without steady-state averaging."""
         if deltat is None or self._steady_state:
@@ -73,51 +84,68 @@ class EventSampler(ABC):
         t: Optional[float] = None,
         seed=None,
         delta_clip: tuple = None,
+        grl=None,
     ) -> List[Event]:
         """Sample a list of events from the source and detector.
 
-        Exactly one of deltat or nevent must be provided. When deltat is given
-        the number of events is drawn from a Poisson distribution with mean
-        equal to expected_events(morphology, deltat, t).
+        Exactly one of deltat, nevent, or grl must be provided as the livetime
+        source.  When deltat or grl is given the number of events is drawn from
+        a Poisson distribution with mean equal to
+        expected_events(morphology, deltat, t).
 
         Args:
             morphology: Event morphology to sample, either "track" or "cascade".
             deltat: Observation window as a pint Quantity with time units.
                 Controls the Poisson mean when ``nevent`` is None, and sets the
                 time spread ``[t, t + deltat]`` whenever it is provided.
-            nevent: Fixed event count.  When provided alongside ``deltat``,
-                the count is fixed but times are still drawn over
-                ``[t, t + deltat]``.  At least one of ``deltat`` or ``nevent``
-                must be given.
+            nevent: Fixed event count.  When provided alongside ``deltat`` or
+                ``grl``, the count is fixed but times are still drawn over the
+                livetime window.  At least one of ``deltat``, ``nevent``, or
+                ``grl`` must be given.
             t: Reference epoch in MJD. Event times start at ``t``.  Defaults
-                to the sampler's internal reference epoch (2024-01-01).
+                to the sampler's internal reference epoch (2024-01-01), or to
+                the earliest run start when ``grl`` is provided.
             seed: Random seed. Pass different values across pseudo-experiments.
             delta_clip: Clips the log-energy smearing Delta = ln(E_reco/E_true)
                 to (lo, hi). Useful for suppressing tail artefacts in validation.
+            grl: Good run list specifying valid livetime intervals.  Accepts a
+                ``GoodRunList`` instance, a path to a single uptime CSV file, a
+                path to a directory of uptime CSV files, or a list of file and/or
+                directory paths.  Mutually exclusive with ``deltat``.  When
+                provided, event times are drawn within good runs rather than
+                uniformly over a contiguous window.
 
         Returns:
             List of sampled Event objects.
         """
+        grl = self._resolve_grl(grl, deltat)
+        if grl is not None:
+            deltat = grl.total_livetime
+            if t is None:
+                t = grl.t_start
+
         if self._multi:
             deltats     = self._resolve_per_detector(deltat,     "deltat")
+            grls        = self._resolve_per_detector(grl,        "grl")
             ts          = self._resolve_per_detector(t,          "t")
             delta_clips = self._resolve_per_detector(delta_clip, "delta_clip")
             import numpy as np
             rng = np.random.default_rng(seed)
             all_events = []
-            for idx, (sampler, dt, t_, dc) in enumerate(
-                zip(self._samplers, deltats, ts, delta_clips)
+            for idx, (sampler, dt, grl_, t_, dc) in enumerate(
+                zip(self._samplers, deltats, grls, ts, delta_clips)
             ):
                 events = sampler.sample_events(
                     morphology, deltat=dt, nevent=nevent, t=t_,
-                    seed=int(rng.integers(2**32)), delta_clip=dc,
+                    seed=int(rng.integers(2**32)), delta_clip=dc, grl=grl_,
                 )
                 for ev in events:
                     ev.detector_id = idx
                 all_events.extend(events)
             return all_events
         return self._sample_events_single(
-            morphology, deltat=deltat, nevent=nevent, t=t, seed=seed, delta_clip=delta_clip,
+            morphology, deltat=deltat, nevent=nevent, t=t, seed=seed,
+            delta_clip=delta_clip, grl=grl,
         )
 
     @abstractmethod
@@ -129,6 +157,7 @@ class EventSampler(ABC):
         t: Optional[float] = None,
         seed=None,
         delta_clip: tuple = None,
+        grl=None,
     ) -> List[Event]:
         """Single-detector implementation of sample_events.  Override in subclasses."""
         pass
@@ -136,20 +165,31 @@ class EventSampler(ABC):
     def expected_events(
         self,
         morphology: str,
-        deltat,
+        deltat=None,
         t: Optional[float] = None,
+        grl=None,
     ):
         """Return the expected (mean) number of events for a given livetime.
 
         Args:
             morphology: Event morphology, e.g. "track" or "cascade".
             deltat: Observation window as a pint Quantity with time units.
-            t: Reference epoch in MJD.  Defaults to the sampler's reference epoch.
+                Mutually exclusive with ``grl``.
+            t: Reference epoch in MJD.  Defaults to the sampler's reference
+                epoch, or to the earliest run start when ``grl`` is provided.
+            grl: Good run list.  Accepts the same types as ``sample_events``.
+                Mutually exclusive with ``deltat``.
 
         Returns:
             Expected number of events (before Poisson sampling).  Returns a list
             when multi-detector mode is active.
         """
+        grl = self._resolve_grl(grl, deltat)
+        if grl is not None:
+            deltat = grl.total_livetime
+            if t is None:
+                t = grl.t_start
+
         if self._multi:
             deltats = self._resolve_per_detector(deltat, "deltat")
             ts      = self._resolve_per_detector(t,      "t")

@@ -3,6 +3,9 @@ import numpy as np
 from ..conventions import SkyCoordinate, EarthCoordinate
 from ..detector import Detector
 
+_SIDEREAL_DAY = 0.99726958  # mean sidereal day in solar days
+_J2000_MJD    = 51545.0
+
 
 def _effa_grid_steady_state(decs, earth_coord, effa_fn, es, n_ha_samples):
     """Compute the hour-angle-averaged effective area at each (dec, E) grid point.
@@ -174,15 +177,19 @@ def _build_sampling_data(target, es, log_es, sds, sd_edges, ra_edges, le_edges):
         * le_widths[np.newaxis, np.newaxis, :]
     ).sum())
 
-    # Weight by log-E cell widths so the first/last half-width bins are not
-    # over-sampled.  RA widths are uniform and cancel; sd widths are uniform
-    # and cancel.  Only le_widths are non-uniform (half-step at the edges).
+    # Weight by both log-E and sin(dec) cell widths.  The energy grid is
+    # adaptive so le_widths are non-uniform; the boundary energy bins are
+    # half-width.  The sin(dec) grid from linspace(-1,1,n_dec) gives boundary
+    # cells (sin_dec = ±1) that are also half-width relative to interior cells.
+    # Without the sd_widths correction those boundary bins get 2× the density
+    # they should, producing a spike at the poles.
     le_w = le_widths[np.newaxis, np.newaxis, :]   # (1, 1, n_e)
 
     w_dec = (w * le_w).sum(axis=(1, 2))
-    total_dec = w_dec.sum()
+    w_dec_vol = w_dec * sd_widths                 # correct for boundary half-cells
+    total_dec = w_dec_vol.sum()
     if total_dec > 0:
-        cdf_dec = np.cumsum(w_dec / total_dec)
+        cdf_dec = np.cumsum(w_dec_vol / total_dec)
     else:
         cdf_dec = np.linspace(1.0 / n_dec, 1.0, n_dec)
     cdf_dec[-1] = 1.0  # pin to exactly 1 so argmax/searchsorted never fall off the end
@@ -296,6 +303,7 @@ def smear_truth_batch(
     morphology: str,
     rng=None,
     delta_clip: tuple = None,
+    local_zeniths: np.ndarray = None,
 ) -> tuple:
     """Vectorized smearing for N events.
 
@@ -327,25 +335,26 @@ def smear_truth_batch(
 
     if js is not None and morphology in js:
         joint_fn = js[morphology]
-        # Convert equatorial dec to local zenith for the smearing band lookup.
-        # Use the hour-angle-averaged formula cos(zen) = sin(lat)*sin(dec),
-        # which is the representative zenith after averaging over sidereal time.
-        lat = detector.location.latitude
-        local_zeniths = np.arccos(np.clip(
-            np.sin(lat) * np.sin(true_decs), -1.0, 1.0
-        ))
-        results       = [joint_fn(e, z, rng=_rng) for e, z in zip(true_energies, local_zeniths)]
-        # joint_fn returns reco_energy as a pint Quantity; strip units so the
-        # array is plain float64, consistent with the non-joint path.
-        reco_energies = np.array([r[0].magnitude for r in results])
-        psis     = np.array([r[1] for r in results])
-        ang_errs = np.array([r[2] for r in results])
+        if local_zeniths is None:
+            lat = detector.location.latitude
+            local_zeniths = np.arccos(np.clip(
+                np.sin(lat) * np.sin(true_decs), -1.0, 1.0
+            ))
+        if hasattr(joint_fn, 'batch'):
+            reco_energies, psis, ang_errs = joint_fn.batch(
+                true_energies, local_zeniths, rng=_rng,
+            )
+        else:
+            results       = [joint_fn(e, z, rng=_rng) for e, z in zip(true_energies, local_zeniths)]
+            reco_energies = np.array([r[0].magnitude for r in results])
+            psis     = np.array([r[1] for r in results])
+            ang_errs = np.array([r[2] for r in results])
     else:
         ang_sampler = detector.response.angular_response.get(morphology)
         if ang_sampler is not None:
             us_ang   = _rng.random(n)
-            psis     = np.array([ang_sampler(e, u) for e, u in zip(true_energies, us_ang)])
-            ang_errs = np.array([ang_sampler(e, 0.5) for e in true_energies])
+            psis     = ang_sampler(true_energies, us_ang)
+            ang_errs = ang_sampler(true_energies, np.full(n, 0.5))
         else:
             psis     = np.full(n, np.nan)
             ang_errs = np.full(n, np.nan)
@@ -373,6 +382,7 @@ def smear_truth(
     detector: Detector,
     morphology: str,
     rng=None,
+    local_zenith: float = None,
 ):
     """Apply detector smearing to a true (direction, energy) scalar event.
 
@@ -408,9 +418,10 @@ def smear_truth(
 
     js = detector.response.joint_smearing
     if js is not None and morphology in js:
-        lat = detector.location.latitude
-        dec = true_direction.declination
-        local_zenith = float(np.arccos(np.clip(np.sin(lat) * np.sin(dec), -1.0, 1.0)))
+        if local_zenith is None:
+            lat = detector.location.latitude
+            dec = true_direction.declination
+            local_zenith = float(np.arccos(np.clip(np.sin(lat) * np.sin(dec), -1.0, 1.0)))
         reco_energy, psi, ang_err = js[morphology](true_energy, local_zenith, rng=_rng)
     else:
         ang_sampler = detector.response.angular_response.get(morphology)
@@ -438,3 +449,159 @@ def smear_truth(
         )
         reco_direction = SkyCoordinate(float(rd[0]), float(rr[0]))
     return reco_direction, reco_energy, ang_err
+
+
+def _local_zeniths_from_times(event_times, decs, ras, lat, lon):
+    """Compute the instantaneous local zenith angle for each event.
+
+    Uses the analytic formula
+        cos(zen) = sin(lat)*sin(dec) + cos(lat)*cos(dec)*cos(HA)
+    where HA = LST - RA is derived from the event timestamp via _mjd_to_lst.
+
+    Args:
+        event_times: (n,) array of event times in MJD.
+        decs: (n,) array of true declinations in radians.
+        ras: (n,) array of true right ascensions in radians.
+        lat: Detector latitude in radians.
+        lon: Detector east longitude in radians.
+
+    Returns:
+        ndarray of shape (n,) with zenith angles in radians.
+    """
+    lsts    = _mjd_to_lst(event_times, lon)
+    has     = (lsts - ras) % (2.0 * np.pi)
+    cos_zen = np.sin(lat) * np.sin(decs) + np.cos(lat) * np.cos(decs) * np.cos(has)
+    return np.arccos(np.clip(cos_zen, -1.0, 1.0))
+
+
+def _local_coords_from_times(event_times, decs, ras, lat, lon):
+    """Compute local zenith and azimuth angles for each event.
+
+    Azimuth convention: North = 0, East = π/2, increasing clockwise when
+    viewed from above (standard astronomical/navigation convention).
+
+    Args:
+        event_times: (n,) array of event times in MJD.
+        decs: (n,) array of true declinations in radians.
+        ras: (n,) array of true right ascensions in radians.
+        lat: Detector latitude in radians.
+        lon: Detector east longitude in radians.
+
+    Returns:
+        Tuple (zeniths, azimuths) each of shape (n,), in radians.
+        Zeniths in [0, π]; azimuths in [0, 2π).
+    """
+    lsts    = _mjd_to_lst(event_times, lon)
+    has     = (lsts - ras) % (2.0 * np.pi)
+    cos_zen = np.sin(lat) * np.sin(decs) + np.cos(lat) * np.cos(decs) * np.cos(has)
+    zeniths = np.arccos(np.clip(cos_zen, -1.0, 1.0))
+    sin_az  = -np.cos(decs) * np.sin(has)
+    cos_az  = np.sin(decs) * np.cos(lat) - np.cos(decs) * np.cos(has) * np.sin(lat)
+    azimuths = np.arctan2(sin_az, cos_az) % (2.0 * np.pi)
+    return zeniths, azimuths
+
+
+def _effa_grid_from_lst(decs, ras, lat, effa_fn, es, lst):
+    """Instantaneous effective area on a (dec, RA, E) grid at a given LST.
+
+    For each (dec, RA) cell, computes HA = LST - RA and hence the zenith angle
+    analytically, then evaluates effa_fn.  Faster than astropy-based
+    zenith_grid because no coordinate transforms are required.
+
+    Args:
+        decs: (n_dec,) declinations in radians.
+        ras: (n_ra,) right ascensions in radians.
+        lat: Detector latitude in radians.
+        effa_fn: Callable effa_fn(zenith_rad, energy_GeV) -> cm².
+        es: (n_e,) energies in GeV.
+        lst: Local sidereal time in radians.
+
+    Returns:
+        ndarray of shape (n_dec, n_ra, n_e).
+    """
+    n_dec, n_ra, n_e = len(decs), len(ras), len(es)
+    ha = lst - ras  # (n_ra,)
+    cos_zens = (
+        np.sin(lat) * np.sin(decs)[:, np.newaxis]
+        + np.cos(lat) * np.cos(decs)[:, np.newaxis] * np.cos(ha)[np.newaxis, :]
+    )  # (n_dec, n_ra)
+    zens = np.arccos(np.clip(cos_zens, -1.0, 1.0))
+    zen_flat = np.repeat(zens.ravel(), n_e)
+    e_flat   = np.tile(es, n_dec * n_ra)
+    return effa_fn(zen_flat, e_flat).reshape(n_dec, n_ra, n_e)
+
+
+def _mjd_to_lst(mjd, longitude_rad):
+    """Approximate local sidereal time in radians from MJD and detector longitude.
+
+    Uses the J2000 GMST polynomial accurate to ~0.1 s over several centuries.
+
+    Args:
+        mjd: Scalar or array of Modified Julian Dates.
+        longitude_rad: Detector east longitude in radians.
+
+    Returns:
+        LST in radians, same shape as *mjd*, in [0, 2π).
+    """
+    d = np.asarray(mjd, dtype=float) - _J2000_MJD
+    gmst_rad = ((18.697374558 + 24.06570982441908 * d) % 24) / 24.0 * 2.0 * np.pi
+    return (gmst_rad + longitude_rad) % (2.0 * np.pi)
+
+
+def _sample_from_slice(d, n, rng):
+    """Sample n (sin_dec, RA, log_E) tuples from one pre-built sampling slice.
+
+    Args:
+        d: Sampling data dict as returned by _build_sampling_data.
+        n: Number of samples to draw.
+        rng: numpy Generator.
+
+    Returns:
+        Tuple (sin_dec, ra, log_e) each of shape (n,).
+    """
+    cdf_dec            = d["cdf_dec"]
+    cdf_e_given_dec    = d["cdf_e_given_dec"]
+    cdf_ra_given_dec_e = d["cdf_ra_given_dec_e"]
+    sd_edges           = d["sd_edges"]
+    ra_edges           = d["ra_edges"]
+    le_edges           = d["le_edges"]
+
+    n_dec = len(cdf_dec)
+    n_e   = cdf_e_given_dec.shape[1]
+    n_ra  = cdf_ra_given_dec_e.shape[2]
+
+    i_dec = np.clip(np.searchsorted(cdf_dec, rng.random(n)), 0, n_dec - 1)
+    cdfs_e = cdf_e_given_dec[i_dec]
+    i_e = np.clip(np.argmax(cdfs_e >= rng.random(n)[:, None], axis=1), 0, n_e - 1)
+    cdfs_ra = cdf_ra_given_dec_e[i_dec, i_e]
+    i_ra = np.clip(np.argmax(cdfs_ra >= rng.random(n)[:, None], axis=1), 0, n_ra - 1)
+
+    sin_dec = rng.uniform(sd_edges[i_dec],  sd_edges[i_dec + 1])
+    ra      = rng.uniform(ra_edges[i_ra],   ra_edges[i_ra  + 1])
+    log_e   = rng.uniform(le_edges[i_e],    le_edges[i_e   + 1])
+    return sin_dec, ra, log_e
+
+
+def _assign_times_from_slices(t_start, deltat, k_arr, n_slices, rng):
+    """Assign event times consistent with sidereal phase implied by slice indices.
+
+    Each event in slice k is placed in a random sidereal day within the
+    observation window at the fraction (k + U[0,1)) / n_slices of that day.
+
+    Args:
+        t_start: Observation start in MJD.
+        deltat: Observation duration as a pint Quantity with time units.
+        k_arr: Integer array of slice indices, shape (n,).
+        n_slices: Total number of slices.
+        rng: numpy Generator.
+
+    Returns:
+        ndarray of shape (n,) with event times in MJD, clipped to
+        [t_start, t_start + deltat].
+    """
+    deltat_days = deltat.to('day').magnitude
+    n_sd   = max(1, int(np.floor(deltat_days / _SIDEREAL_DAY)))
+    phases = (k_arr + rng.random(len(k_arr))) / n_slices
+    day_i  = rng.integers(0, n_sd, size=len(k_arr))
+    times  = t_start + day_i * _SIDEREAL_DAY + phases * _SIDEREAL_DAY
+    return np.clip(times, t_start, t_start + deltat_days)
