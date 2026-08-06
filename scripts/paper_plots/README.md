@@ -2,16 +2,17 @@
 
 Scripts in this directory reproduce the figures in the SPORE paper.
 Flux models and detector responses are read from `../../resources/`.
-External data releases are accessed via symlinks in this directory.
+External data releases are read from `../../resources/data_releases/`; see the
+README there for download links.  Place or symlink them as below.
 
-## Required Symlinks
+## Required Data Releases
 
-Before running these scripts, create the following symlinks:
+Before running these scripts, make each release available at the path shown:
 
 ### HESE 7.5-year data release
 
 ```
-ln -s /path/to/HESE-7-year-data-release hese_7yr_data_release
+ln -s /path/to/HESE-7-year-data-release ../../resources/data_releases/hese_7yr_data_release
 ```
 
 Expected contents:
@@ -26,7 +27,7 @@ Available at: https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.79
 ### IceCube 10-year point-source tracks data release
 
 ```
-ln -s /path/to/dataverse_files ps10yr_data_release
+ln -s /path/to/dataverse_files ../../resources/data_releases/ps10yr_data_release
 ```
 
 Expected contents:
@@ -47,7 +48,7 @@ These files are read directly from the repository's `resources/` directory:
 | `atmo_flux_models.h5` | Atmospheric flux models (Honda, MCEq variants) for PS tracks |
 | `ps10yr_combined_flux.h5` | Combined astrophysical + atmospheric flux for PS tracks |
 | `paper.mplstyle` | Matplotlib style sheet for paper figures |
-| `configs/ps10yr_response.toml` | Detector response config for PS tracks |
+| `configs/ps10yr_detector_response.h5` | PS-10yr detector IRF (hierarchical HDF5) |
 | `plotting_data.h5` | Pre-computed data cached between figure scripts |
 
 ## Workflow
@@ -73,7 +74,7 @@ cd paper && python plots.py --datafile ../resources/plotting_data.h5
 | Script | HDF5 group written | Description |
 |--------|--------------------|-------------|
 | `hese_comparison.py` | `figure_4` | HESE 7.5-year comparison: energy spectrum and LLH test statistic |
-| `pstracks_roundtrip.py` | `figure_5` | PS tracks 10-year round-trip: energy spectrum vs IC86 data |
+| `pstracks_roundtrip.py` | `figure_5` | PS tracks 10-year round-trip: declination and energy-proxy distributions vs IC86 data |
 | `multidetector_skymap.py` | `multidetector_skymap` | (RA, sin δ) samples for IceCube and KM3NeT, instantaneous and diurnal-average |
 | `effective_area.py` | `effective_area` | Track effective area vs energy at five declinations for both detectors |
 | `point_source_demo.py` | `point_source_demo` | Point source ψ² templates and sampled data |

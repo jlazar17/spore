@@ -159,7 +159,7 @@ smeared_per_run   = smeared_counts   / N_SAMPLES
 unsmeared_per_run = unsmeared_counts / N_SAMPLES
 
 # Debiased: divide each bin by its correction factor
-with np.errstate(invalid="ignore"):
+with np.errstate(invalid="ignore", divide="ignore"):
     debiased_per_run = np.where(
         np.isfinite(correction) & (correction > 0),
         smeared_per_run / correction,
