@@ -193,11 +193,12 @@ class EventSampler(ABC):
         if self._multi:
             deltats = self._resolve_per_detector(deltat, "deltat")
             ts      = self._resolve_per_detector(t,      "t")
+            grls    = self._resolve_per_detector(grl,    "grl")
             return [
-                s._expected_events_single(morphology, dt, t=t_)
-                for s, dt, t_ in zip(self._samplers, deltats, ts)
+                s._expected_events_single(morphology, dt, t=t_, grl=g)
+                for s, dt, t_, g in zip(self._samplers, deltats, ts, grls)
             ]
-        return self._expected_events_single(morphology, deltat, t=t)
+        return self._expected_events_single(morphology, deltat, t=t, grl=grl)
 
     @abstractmethod
     def _expected_events_single(
@@ -205,6 +206,7 @@ class EventSampler(ABC):
         morphology: str,
         deltat,
         t: Optional[float] = None,
+        grl=None,
     ) -> float:
         """Single-detector implementation of expected_events.  Override in subclasses."""
         pass

@@ -5,9 +5,8 @@ from typing import List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
-from ..conventions import SkyCoordinate, ureg
+from ..conventions import SkyCoordinate
 from ..physics import neutrinos, Morphology
-from ..source import ExtendedSource
 from ..detector import Detector
 
 from .event_sampler import EventSampler
@@ -15,8 +14,10 @@ from .event import Event
 from .utils import (
     smear_truth_batch, zenith_grid, _build_sampling_data,
     build_adaptive_log_energy_grid,
-    _effa_grid_from_lst, _sample_from_slice, _assign_times_from_slices, _mjd_to_lst,
-    _local_zeniths_from_times, _local_coords_from_times,
+    _effa_grid_from_lst, _sample_from_slice, _assign_times_from_slices,
+    _local_coords_from_times, _mjd_to_lst,
+    _sample_times_in_slices, _grl_slice_weights, _grl_mean_rate,
+    resolve_energy_bounds,
 )
 
 
@@ -126,17 +127,7 @@ class ExtendedSourceEventSampler(EventSampler):
             )
 
         # --- resolve energy bounds from IRF ∩ flux if not provided ---
-        from .utils import _effa_energy_bounds
-        if e_min is None or e_max is None:
-            first_morph = sorted(det.response.effective_area)[0]
-            first_effa  = det.response.effective_area[first_morph]
-            _irf_lo, _irf_hi = _effa_energy_bounds(first_effa)
-            _src_lo = getattr(getattr(src, 'flux', None), 'e_min_gev', None)
-            _src_hi = getattr(getattr(src, 'flux', None), 'e_max_gev', None)
-            if e_min is None:
-                e_min = max(_irf_lo, _src_lo) if _src_lo is not None else _irf_lo
-            if e_max is None:
-                e_max = min(_irf_hi, _src_hi) if _src_hi is not None else _irf_hi
+        e_min, e_max = resolve_energy_bounds(det, src, e_min, e_max)
 
         # --- coordinate grids (cell centres) ---
         sds  = np.linspace(-1.0, 1.0, n_dec)
@@ -276,13 +267,20 @@ class ExtendedSourceEventSampler(EventSampler):
         morphology: str,
         deltat,
         t: Optional[float] = None,
+        grl=None,
     ):
         if morphology not in self._d:
             raise ValueError(
                 f"Morphology '{morphology}' is not available for this detector. "
                 f"Available: {list(self._d.keys())}."
             )
-        return self._d[morphology]["norm"] * deltat.to('s').magnitude
+        return self._mean_rate(self._d[morphology], grl) * deltat.to('s').magnitude
+
+    def _mean_rate(self, d, grl):
+        """Mean rate [s^-1]: exposure-weighted across LST slices under a GRL."""
+        if grl is None or "slices" not in d:
+            return d["norm"]
+        return _grl_mean_rate(d["norms"], grl, self._det.location.longitude)
 
     def _sample_events_single(
         self,
@@ -341,7 +339,7 @@ class ExtendedSourceEventSampler(EventSampler):
         rng = np.random.default_rng(seed)
         d = self._d[morphology]
         if nevent is None:
-            nevent = rng.poisson(d["norm"] * deltat.to('s').magnitude)
+            nevent = rng.poisson(self._mean_rate(d, grl) * deltat.to('s').magnitude)
         if t is None:
             t = self._t0
 
@@ -359,17 +357,21 @@ class ExtendedSourceEventSampler(EventSampler):
             weights    = d["weights"]
             n_slices   = len(slice_data)
 
+            lon = self._det.location.longitude
             if grl is not None:
-                # Draw times first, derive slice indices from LST so position
-                # sampling matches the actual observing conditions.
-                event_times = grl.sample_times(n, rng)
-                lon   = self._det.location.longitude
-                lsts  = _mjd_to_lst(event_times, lon)
-                k_arr = (lsts / (2 * np.pi) * n_slices).astype(int) % n_slices
+                # Choose the LST slice from rate x exposure, then draw a time
+                # from the run list conditioned on that slice.
+                k_arr = rng.choice(
+                    n_slices, size=n,
+                    p=_grl_slice_weights(d["norms"], grl, lon),
+                )
+                event_times = _sample_times_in_slices(grl, k_arr, n_slices, rng, lon)
             else:
                 k_arr = rng.choice(n_slices, size=n, p=weights)
                 if deltat is not None:
-                    event_times = _assign_times_from_slices(t, deltat, k_arr, n_slices, rng)
+                    event_times = _assign_times_from_slices(
+                        t, deltat, k_arr, n_slices, rng, longitude=lon,
+                    )
                 else:
                     event_times = np.full(n, t)
 
@@ -408,7 +410,13 @@ class ExtendedSourceEventSampler(EventSampler):
             ra_arr      = rng.uniform(ra_edges[i_ra],  ra_edges[i_ra  + 1])
             log_e_arr   = rng.uniform(le_edges[i_e],   le_edges[i_e   + 1])
 
-            offset  = 2.0 * np.pi * ((t - self._t0) % 1)
+            # The snapshot grid is built at t0, so rotate sampled RAs by the
+            # Earth rotation between t0 and t.  That rotation is the change in
+            # local sidereal time, not the fraction of a *solar* day elapsed:
+            # the two drift apart by ~1 deg/day and are a half-turn out after
+            # six months.
+            lon     = self._det.location.longitude
+            offset  = (_mjd_to_lst(t, lon) - _mjd_to_lst(self._t0, lon)) % (2.0 * np.pi)
             ra_arr  = np.mod(ra_arr + offset, 2.0 * np.pi)
 
             if grl is not None:

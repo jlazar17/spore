@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Callable, Optional
+from typing import Callable
 from scipy.interpolate import PchipInterpolator
 
 # Code-level default for effective area Gaussian smoothing (energy bins).
@@ -111,7 +111,8 @@ def effa_helper(
         smoothing_sigma: Standard deviation (in energy bins) of the Gaussian
             kernel applied to each zenith column after trimming.  Smooths
             over MC statistical noise in the high-energy tail.  Default 1.5.
-            Set to 0 to disable smoothing.  **Caveat emptor**: the right value
+            Set to 0 to disable smoothing.  Applied independently of
+            ``trim_isolated``.  **Caveat emptor**: the right value
             is IRF-dependent — always plot the effective area after loading
             and verify the shape looks physically reasonable before using
             SPORE for analysis.
@@ -122,8 +123,8 @@ def effa_helper(
     """
     if trim_isolated:
         tabulated_values = _trim_isolated_bins(tabulated_values)
-        if smoothing_sigma > 0:
-            tabulated_values = _smooth_columns(tabulated_values, sigma=smoothing_sigma)
+    if smoothing_sigma > 0:
+        tabulated_values = _smooth_columns(tabulated_values, sigma=smoothing_sigma)
 
     # Dead/trimmed cells use a large negative sentinel in log-space so that
     # PCHIP (which requires all-finite inputs) can be applied.  The sentinel

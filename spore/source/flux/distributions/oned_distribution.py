@@ -1,6 +1,5 @@
 import numpy as np
 
-from typing import Optional
 from scipy.interpolate import CubicSpline
 
 from .distribution import Distribution
