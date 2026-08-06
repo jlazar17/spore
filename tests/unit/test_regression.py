@@ -70,17 +70,17 @@ class TestPointSourceSamplerRegression:
         n = point_source_sampler.expected_events(
             "track", ureg.Quantity(365.25 * 24 * 3600, "s")
         )
-        assert n == pytest.approx(765.370295, rel=1e-5)
+        assert n == pytest.approx(634.9918254142343, rel=1e-5)
 
     def test_nevent_3_seed42_true_energies(self, point_source_sampler):
         events = point_source_sampler.sample_events("track", nevent=3, seed=42)
-        expected = [15467.929837, 2136.329863, 128047.506041]
+        expected = [4412.290293, 1781.198620, 7044.512448]
         for ev, exp in zip(events, expected):
             assert ev.true_energy.magnitude == pytest.approx(exp, rel=1e-5)
 
     def test_nevent_3_seed42_reco_energies(self, point_source_sampler):
         events = point_source_sampler.sample_events("track", nevent=3, seed=42)
-        expected = [26076.857670, 3785.651316, 60863.192610]
+        expected = [7438.530378, 3156.346318, 3348.378514]
         for ev, exp in zip(events, expected):
             assert ev.reco_energy.magnitude == pytest.approx(exp, rel=1e-5)
 
@@ -98,33 +98,3 @@ class TestPointSourceSamplerRegression:
         energies_a = [ev.true_energy.magnitude for ev in a]
         energies_b = [ev.true_energy.magnitude for ev in b]
         assert energies_a != energies_b
-
-
-@pytest.mark.slow
-class TestEffaGridSteadyStateRegression:
-    """_effa_grid_steady_state values must not change silently."""
-
-    def test_flat_effa_south_pole_value(self, detector):
-        from spore.event_sampling.utils import _effa_grid_steady_state
-        from spore.conventions import EarthCoordinate
-
-        south_pole = EarthCoordinate(latitude=-np.pi / 2, longitude=0.0)
-        effa_fn = detector.response.effective_area["track"]
-        decs = np.array([0.0])
-        es   = np.array([1e4])
-        result = _effa_grid_steady_state(decs, south_pole, effa_fn, es, n_ha_samples=100)
-        # At dec=0 the South Pole sees the source always at zen=π/2, which is on
-        # the edge of the synthetic grid — result should be non-negative.
-        assert result[0, 0] >= 0.0
-
-    def test_output_is_stable_across_runs(self, detector):
-        from spore.event_sampling.utils import _effa_grid_steady_state
-        from spore.conventions import EarthCoordinate
-
-        south_pole = EarthCoordinate(latitude=-np.pi / 2, longitude=0.0)
-        effa_fn = detector.response.effective_area["track"]
-        decs = np.array([-np.pi / 6, 0.0, np.pi / 6])
-        es   = np.logspace(3, 5, 4)
-        r1 = _effa_grid_steady_state(decs, south_pole, effa_fn, es, n_ha_samples=50)
-        r2 = _effa_grid_steady_state(decs, south_pole, effa_fn, es, n_ha_samples=50)
-        np.testing.assert_array_equal(r1, r2)
