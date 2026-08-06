@@ -6,6 +6,7 @@ from typing import Dict, Optional
 
 from ..conventions import EarthCoordinate
 from .detector_response import DetectorResponse
+from ..config import load_config
 
 class Medium(Enum):
     Ice = 1
@@ -50,6 +51,7 @@ class Detector:
         Returns:
             A configured Detector instance.
         """
+        config = load_config(config)
         location = EarthCoordinate(
             np.radians(config["properties"]["latitude"]),
             np.radians(config["properties"]["longitude"]),
