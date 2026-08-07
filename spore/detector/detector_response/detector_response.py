@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 from scipy.interpolate import RegularGridInterpolator, PchipInterpolator
 
-from .. import Neutrino
 from ...conventions import ureg
 from ...physics import Morphology
 
@@ -214,6 +213,12 @@ def effa_spline_from_group(gp: h5.Group, trim_isolated: bool = True, smoothing_s
         out = np.zeros(np.atleast_1d(np.asarray(zen)).shape)
         return float(out[0]) if scalar else out
 
+    # Carry the file's energy bounds even on the all-zero placeholder, so that
+    # a species with no effective area cannot widen the sampling grid to the
+    # fallback range via _effa_energy_bounds.
+    _zero_fn.e_min_gev = float(es[0])
+    _zero_fn.e_max_gev = float(es[-1])
+
     if tabulated_raw.ndim == 3:  # per-species: shape (6, N_E, N_ZEN)
         fns = []
         for idx in range(6):
@@ -310,13 +315,6 @@ def smearing_sampler_from_group(gp: h5.Group) -> Callable:
         'fractional_counts': gp['fractional_counts'][:],
     }
     return _build_smearing_sampler(data)
-
-
-def _write_smearing_group(hf: h5.File, name: str, data: dict) -> None:
-    """Write a smearing data dict to an HDF5 group."""
-    grp = hf.create_group(name)
-    for key, arr in data.items():
-        grp.create_dataset(key, data=arr)
 
 
 def _parse_aeff_csv(path: str):

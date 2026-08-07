@@ -5,6 +5,7 @@ from typing import Optional, Dict
 
 from . import Neutrino, neutrinos
 from .distributions import Distribution 
+from ...config import load_config
 
 class Flux:
     """Per-species neutrino flux model.
@@ -100,6 +101,7 @@ class Flux:
         Returns:
             A configured Flux instance.
         """
+        config = load_config(config, section="flux")
         has_powerlaw = all(x in config for x in ["gamma", "emin", "emax"]) and (
             "norm_per_species" in config or "norm" in config
         )

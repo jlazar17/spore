@@ -22,10 +22,12 @@ Usage
 Run from the repository root::
 
     python scripts/paper_plots/irf_validation_appendix.py
-"""
 
-import matplotlib
-matplotlib.use("Agg")
+Or import and call ``main()`` from a notebook::
+
+    from scripts.paper_plots.irf_validation_appendix import main
+    main()
+"""
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -37,17 +39,11 @@ from spore import Detector, Morphology
 from spore.event_sampling.utils import smear_truth
 from spore.conventions import SkyCoordinate
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 _REPO         = Path(__file__).resolve().parents[2]
 PS_RESPONSE   = _REPO / "resources" / "configs" / "ps10yr_detector_response.h5"
 HESE_RESPONSE = _REPO / "resources" / "hese_7yr_detector_response.h5"
 OUT_DIR       = _REPO / "scripts" / "paper_plots"
 
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
 # True energies (GeV) — placed at PS-10yr bin centres for unambiguous look-up.
 E_TRUE_GEV = [
     10 ** 4.25,   #  ~18  TeV
@@ -65,260 +61,281 @@ PS_DEC_BAND_IDX   = 2
 PS_ZENITH_MID_RAD = np.radians(140.0)
 
 # HESE: PSF and energy resolution are zenith-independent
-HESE_SC           = SkyCoordinate(0.0, 0.0)
-HESE_ZENITH_RAD   = np.radians(90.0)
-HESE_MORPH        = "astro_cascade"
+HESE_SC         = SkyCoordinate(0.0, 0.0)
+HESE_ZENITH_RAD = np.radians(90.0)
+HESE_MORPH      = "astro_cascade"
 
 LN10 = np.log(10.0)
 
-# ---------------------------------------------------------------------------
-# Load detectors
-# ---------------------------------------------------------------------------
-ps_det    = Detector.from_config({
-    "properties": {"latitude": -90.0, "longitude": 0.0, "medium": "Ice"},
-    "response":   {"detector_response_file": str(PS_RESPONSE)},
-})
-ps_sampler = ps_det.response.joint_smearing["track"]
 
-for name in ["astro_cascade", "astro_track", "atmo_cascade",
-             "atmo_track", "astro_doublebang"]:
-    Morphology.register(name)
+def load_ps_tables(ps_response_path=PS_RESPONSE):
+    """Load PS-10yr smearing tables from HDF5."""
+    with h5py.File(ps_response_path) as hf:
+        sm = hf["track/smearing"]
+        return dict(
+            log10et_edges  = sm["log10e_true_edges"][:],
+            log10er_lo_all = sm["log10e_reco_lo"][:],
+            log10er_hi_all = sm["log10e_reco_hi"][:],
+            psf_lo_all     = sm["psf_lo"][:],
+            psf_hi_all     = sm["psf_hi"][:],
+            frac_all       = sm["fractional_counts"][:],
+        )
 
-hese_det = Detector.from_config({
-    "properties": {"latitude": -90.0, "longitude": 0.0, "medium": "Ice"},
-    "response":   {"detector_response_file": str(HESE_RESPONSE)},
-})
 
-# ---------------------------------------------------------------------------
-# Load raw IRF tables
-# ---------------------------------------------------------------------------
-with h5py.File(PS_RESPONSE) as hf:
-    sm = hf["track/smearing"]
-    ps_log10et_edges  = sm["log10e_true_edges"][:]
-    ps_log10er_lo_all = sm["log10e_reco_lo"][:]
-    ps_log10er_hi_all = sm["log10e_reco_hi"][:]
-    ps_psf_lo_all     = sm["psf_lo"][:]
-    ps_psf_hi_all     = sm["psf_hi"][:]
-    ps_frac_all       = sm["fractional_counts"][:]
+def load_hese_tables(hese_response_path=HESE_RESPONSE, morph=HESE_MORPH):
+    """Load HESE IRF tables for the given morphology from HDF5."""
+    with h5py.File(hese_response_path) as hf:
+        grp = hf[morph]
+        return dict(
+            er_us    = grp["energy_resolution/us"][:],
+            er_icdf  = grp["energy_resolution/inv_cdf"][:],
+            ar_es    = grp["angular_response/energies"][:],
+            ar_us    = grp["angular_response/us"][:],
+            ar_icdfs = grp["angular_response/inv_cdfs"][:],
+        )
 
-with h5py.File(HESE_RESPONSE) as hf:
-    grp              = hf[HESE_MORPH]
-    hese_er_us       = grp["energy_resolution/us"][:]
-    hese_er_icdf     = grp["energy_resolution/inv_cdf"][:]
-    hese_ar_es       = grp["angular_response/energies"][:]
-    hese_ar_us       = grp["angular_response/us"][:]
-    hese_ar_icdfs    = grp["angular_response/inv_cdfs"][:]
 
-# ---------------------------------------------------------------------------
-# Analytic CDF helpers
-# ---------------------------------------------------------------------------
+def ps_analytic_energy_cdf(log10et_mid, ps_tables, dec_band_idx=PS_DEC_BAND_IDX):
+    """Analytic energy smearing CDF for a given log10(E_true) from PS-10yr tables."""
+    edges = ps_tables["log10et_edges"]
+    frac  = ps_tables["frac_all"]
+    lo    = ps_tables["log10er_lo_all"]
+    hi    = ps_tables["log10er_hi_all"]
 
-def ps_analytic_energy_cdf(log10et_mid):
-    i_et = int(np.clip(
-        np.searchsorted(ps_log10et_edges[1:], log10et_mid),
-        0, len(ps_log10et_edges) - 2,
-    ))
-    frac = ps_frac_all[i_et, PS_DEC_BAND_IDX].copy()
-    frac /= frac.sum()
-    frac_e  = frac.sum(axis=(1, 2))
-    er_mid  = 0.5 * (ps_log10er_lo_all[i_et, PS_DEC_BAND_IDX]
-                     + ps_log10er_hi_all[i_et, PS_DEC_BAND_IDX])
-    x       = er_mid - log10et_mid
-    order   = np.argsort(x)
+    i_et = int(np.clip(np.searchsorted(edges[1:], log10et_mid), 0, len(edges) - 2))
+    f = frac[i_et, dec_band_idx].copy()
+    f /= f.sum()
+    frac_e = f.sum(axis=(1, 2))
+    er_mid = 0.5 * (lo[i_et, dec_band_idx] + hi[i_et, dec_band_idx])
+    x      = er_mid - log10et_mid
+    order  = np.argsort(x)
     x, frac_e = x[order], frac_e[order]
     return (np.concatenate([[x[0] - 1e-9], x]),
             np.clip(np.concatenate([[0.0], np.cumsum(frac_e)]), 0, 1))
 
 
-def ps_analytic_psf_cdf(log10et_mid):
-    i_et = int(np.clip(
-        np.searchsorted(ps_log10et_edges[1:], log10et_mid),
-        0, len(ps_log10et_edges) - 2,
-    ))
-    frac = ps_frac_all[i_et, PS_DEC_BAND_IDX].copy()
-    frac /= frac.sum()
-    frac_p = frac.sum(axis=(0, 2))
-    p_mid  = 0.5 * (ps_psf_lo_all[i_et, PS_DEC_BAND_IDX]
-                    + ps_psf_hi_all[i_et, PS_DEC_BAND_IDX])
+def ps_analytic_psf_cdf(log10et_mid, ps_tables, dec_band_idx=PS_DEC_BAND_IDX):
+    """Analytic PSF CDF for a given log10(E_true) from PS-10yr tables."""
+    edges = ps_tables["log10et_edges"]
+    frac  = ps_tables["frac_all"]
+    p_lo  = ps_tables["psf_lo_all"]
+    p_hi  = ps_tables["psf_hi_all"]
+
+    i_et = int(np.clip(np.searchsorted(edges[1:], log10et_mid), 0, len(edges) - 2))
+    f = frac[i_et, dec_band_idx].copy()
+    f /= f.sum()
+    frac_p = f.sum(axis=(0, 2))
+    p_mid  = 0.5 * (p_lo[i_et, dec_band_idx] + p_hi[i_et, dec_band_idx])
     order  = np.argsort(p_mid)
     p_mid, frac_p = p_mid[order], frac_p[order]
     return (np.concatenate([[max(p_mid[0] - 1e-9, 1e-6)], p_mid]),
             np.clip(np.concatenate([[0.0], np.cumsum(frac_p)]), 0, 1))
 
 
-def hese_analytic_energy_cdf():
-    """Energy-independent; same for all E_true."""
-    return hese_er_icdf / LN10, hese_er_us
+def hese_analytic_energy_cdf(hese_tables):
+    """Analytic energy smearing CDF from HESE tables (energy-independent)."""
+    return hese_tables["er_icdf"] / LN10, hese_tables["er_us"]
 
 
-def hese_analytic_psf_cdf(e_true_gev):
-    i_e = int(np.argmin(np.abs(np.log(hese_ar_es) - np.log(e_true_gev))))
-    return np.degrees(hese_ar_icdfs[i_e]), hese_ar_us
+def hese_analytic_psf_cdf(e_true_gev, hese_tables):
+    """Analytic PSF CDF for a given E_true from HESE tables."""
+    i_e = int(np.argmin(np.abs(np.log(hese_tables["ar_es"]) - np.log(e_true_gev))))
+    return np.degrees(hese_tables["ar_icdfs"][i_e]), hese_tables["ar_us"]
 
 
-# ---------------------------------------------------------------------------
-# Draw all samples up front
-# ---------------------------------------------------------------------------
-rng = np.random.default_rng(RNG_SEED)
-cdf_u = np.arange(1, N_SAMPLES + 1) / N_SAMPLES
+def draw_samples(ps_det, hese_det, e_true_list=E_TRUE_GEV, n_samples=N_SAMPLES, seed=RNG_SEED):
+    """
+    Draw monochromatic samples through PS-10yr and HESE smearing.
 
-ps_energy_samp  = {}   # log10et_mid -> sorted array of log10(Ereco/Etrue)
-ps_psf_samp     = {}   # log10et_mid -> sorted array of psi (deg)
-hese_energy_samp = {}
-hese_psf_samp    = {}
+    Returns
+    -------
+    ps_energy_samp  : dict  log10(E_true) -> sorted array of log10(E_reco/E_true)
+    ps_psf_samp     : dict  log10(E_true) -> sorted array of psi (deg)
+    hese_energy_samp: dict  log10(E_true) -> sorted array of log10(E_reco/E_true)
+    hese_psf_samp   : dict  log10(E_true) -> sorted array of psi (deg)
+    """
+    ps_sampler = ps_det.response.joint_smearing["track"]
+    rng = np.random.default_rng(seed)
 
-for e_true_gev in E_TRUE_GEV:
-    log10et = np.log10(e_true_gev)
-    print(f"Sampling E_true = {e_true_gev/1e3:.0f} TeV ...")
+    ps_energy_samp   = {}
+    ps_psf_samp      = {}
+    hese_energy_samp = {}
+    hese_psf_samp    = {}
 
-    # PS-10yr
-    ps_er = np.empty(N_SAMPLES)
-    ps_psi = np.empty(N_SAMPLES)
-    for k in range(N_SAMPLES):
-        e_reco, psi_rad, _ = ps_sampler(e_true_gev, PS_ZENITH_MID_RAD, rng=rng)
-        ps_er[k]  = np.log10(e_reco.magnitude)
-        ps_psi[k] = np.degrees(psi_rad)
-    ps_energy_samp[log10et] = np.sort(ps_er - log10et)
-    ps_psf_samp[log10et]    = np.sort(ps_psi)
+    for e_true_gev in e_true_list:
+        log10et = np.log10(e_true_gev)
+        print(f"Sampling E_true = {e_true_gev/1e3:.0f} TeV ...")
 
-    # HESE
-    hese_er  = np.empty(N_SAMPLES)
-    hese_psi = np.empty(N_SAMPLES)
-    for k in range(N_SAMPLES):
-        reco_dir, reco_e, _ = smear_truth(HESE_SC, e_true_gev, hese_det,
-                                           HESE_MORPH, rng=rng)
-        e_gev = reco_e.magnitude if hasattr(reco_e, "magnitude") else float(reco_e)
-        hese_er[k]  = np.log10(e_gev)
-        hese_psi[k] = np.degrees(HESE_SC.separation(reco_dir))
-    hese_energy_samp[log10et] = np.sort(hese_er - log10et)
-    hese_psf_samp[log10et]    = np.sort(hese_psi)
+        ps_er  = np.empty(n_samples)
+        ps_psi = np.empty(n_samples)
+        for k in range(n_samples):
+            e_reco, psi_rad, _ = ps_sampler(e_true_gev, PS_ZENITH_MID_RAD, rng=rng)
+            ps_er[k]  = np.log10(e_reco.magnitude)
+            ps_psi[k] = np.degrees(psi_rad)
+        ps_energy_samp[log10et] = np.sort(ps_er - log10et)
+        ps_psf_samp[log10et]    = np.sort(ps_psi)
 
-print("Sampling done.\n")
+        hese_er  = np.empty(n_samples)
+        hese_psi = np.empty(n_samples)
+        for k in range(n_samples):
+            reco_dir, reco_e, _ = smear_truth(HESE_SC, e_true_gev, hese_det,
+                                               HESE_MORPH, rng=rng)
+            e_gev = reco_e.magnitude if hasattr(reco_e, "magnitude") else float(reco_e)
+            hese_er[k]  = np.log10(e_gev)
+            hese_psi[k] = np.degrees(HESE_SC.separation(reco_dir))
+        hese_energy_samp[log10et] = np.sort(hese_er - log10et)
+        hese_psf_samp[log10et]    = np.sort(hese_psi)
 
-# ---------------------------------------------------------------------------
-# Plotting helpers
-# ---------------------------------------------------------------------------
-IRF_LS   = "-"
-SPORE_LS = "--"
-LW       = 1.8
-
-ENERGY_LABELS = [
-    f"$\\approx{e/1e3:.0f}$ TeV" for e in E_TRUE_GEV
-]
+    print("Sampling done.\n")
+    return ps_energy_samp, ps_psf_samp, hese_energy_samp, hese_psf_samp
 
 
-def _add_legend(ax):
+def _add_legend(ax, irf_ls="-", spore_ls="--", lw=1.8, e_true_list=E_TRUE_GEV):
     from matplotlib.lines import Line2D
+    energy_labels = [f"$\\approx{e/1e3:.0f}$ TeV" for e in e_true_list]
     style_handles = [
-        Line2D([0], [0], color="k", ls=IRF_LS,   lw=LW, label="IRF table"),
-        Line2D([0], [0], color="k", ls=SPORE_LS, lw=LW, label="SPORE sampler"),
+        Line2D([0], [0], color="k", ls=irf_ls,   lw=lw, label="IRF table"),
+        Line2D([0], [0], color="k", ls=spore_ls, lw=lw, label="SPORE sampler"),
     ]
     color_handles = [
-        Line2D([0], [0], color=c, ls="-", lw=LW, label=lbl)
-        for c, lbl in zip(COLORS, ENERGY_LABELS)
+        Line2D([0], [0], color=c, ls="-", lw=lw, label=lbl)
+        for c, lbl in zip(COLORS, energy_labels)
     ]
     leg1 = ax.legend(handles=style_handles, fontsize=9, loc="upper left")
     ax.add_artist(leg1)
     ax.legend(handles=color_handles, fontsize=9, loc="lower right")
 
 
-# ---------------------------------------------------------------------------
-# Figure 1: PS-10yr energy smearing
-# ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(6, 5))
-for e_true_gev, color in zip(E_TRUE_GEV, COLORS):
-    log10et = np.log10(e_true_gev)
-    x_irf, y_irf = ps_analytic_energy_cdf(log10et)
-    ax.step(x_irf, y_irf, where="post", lw=LW, color=color, ls=IRF_LS)
-    ax.plot(ps_energy_samp[log10et], cdf_u,   lw=LW, color=color, ls=SPORE_LS)
+def make_figures(ps_tables, hese_tables,
+                 ps_energy_samp, ps_psf_samp, hese_energy_samp, hese_psf_samp,
+                 e_true_list=E_TRUE_GEV, out_dir=OUT_DIR):
+    """Generate and save the four validation figures."""
+    out_dir  = Path(out_dir)
+    irf_ls   = "-"
+    spore_ls = "--"
+    lw       = 1.8
+    cdf_u    = np.arange(1, N_SAMPLES + 1) / N_SAMPLES
 
-ax.axvline(0.0, color="gray", lw=0.8, ls=":")
-ax.set_xlim(-2.5, 2.5)
-ax.set_ylim(-0.02, 1.05)
-ax.set_xlabel(r"$\log_{10}(E_{\rm reco}\,/\,E_{\rm true})$", fontsize=12)
-ax.set_ylabel("CDF", fontsize=12)
-ax.set_title("PS-10yr track — energy smearing\nupgoing dec band (dec > 10°)", fontsize=11)
-ax.grid(True, lw=0.4, alpha=0.5)
-_add_legend(ax)
-plt.tight_layout()
-out = OUT_DIR / "ps10yr_energy_smearing.png"
-plt.savefig(out, dpi=150)
-print(f"Saved: {out}")
-plt.close()
+    # Figure 1: PS-10yr energy smearing
+    fig, ax = plt.subplots(figsize=(6, 5))
+    for e_true_gev, color in zip(e_true_list, COLORS):
+        log10et = np.log10(e_true_gev)
+        x_irf, y_irf = ps_analytic_energy_cdf(log10et, ps_tables)
+        ax.step(x_irf, y_irf, where="post", lw=lw, color=color, ls=irf_ls)
+        ax.plot(ps_energy_samp[log10et], cdf_u, lw=lw, color=color, ls=spore_ls)
+    ax.axvline(0.0, color="gray", lw=0.8, ls=":")
+    ax.set_xlim(-2.5, 2.5)
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_xlabel(r"$\log_{10}(E_{\rm reco}\,/\,E_{\rm true})$", fontsize=12)
+    ax.set_ylabel("CDF", fontsize=12)
+    ax.set_title("PS-10yr track — energy smearing\nupgoing dec band (dec > 10°)", fontsize=11)
+    ax.grid(True, lw=0.4, alpha=0.5)
+    _add_legend(ax, irf_ls=irf_ls, spore_ls=spore_ls, lw=lw, e_true_list=e_true_list)
+    plt.tight_layout()
+    out = out_dir / "ps10yr_energy_smearing.png"
+    plt.savefig(out, dpi=150)
+    print(f"Saved: {out}")
+    plt.close()
 
-# ---------------------------------------------------------------------------
-# Figure 2: PS-10yr PSF
-# ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(6, 5))
-for e_true_gev, color in zip(E_TRUE_GEV, COLORS):
-    log10et = np.log10(e_true_gev)
-    x_irf, y_irf = ps_analytic_psf_cdf(log10et)
-    ax.step(x_irf, y_irf, where="post", lw=LW, color=color, ls=IRF_LS)
-    ax.plot(ps_psf_samp[log10et], cdf_u,    lw=LW, color=color, ls=SPORE_LS)
+    # Figure 2: PS-10yr PSF
+    fig, ax = plt.subplots(figsize=(6, 5))
+    for e_true_gev, color in zip(e_true_list, COLORS):
+        log10et = np.log10(e_true_gev)
+        x_irf, y_irf = ps_analytic_psf_cdf(log10et, ps_tables)
+        ax.step(x_irf, y_irf, where="post", lw=lw, color=color, ls=irf_ls)
+        ax.plot(ps_psf_samp[log10et], cdf_u, lw=lw, color=color, ls=spore_ls)
+    ax.set_xscale("log")
+    ax.set_xlim(0.1, 180)
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_xlabel(r"$\psi$ [deg]", fontsize=12)
+    ax.set_ylabel("CDF", fontsize=12)
+    ax.set_title("PS-10yr track — PSF\nupgoing dec band (dec > 10°)", fontsize=11)
+    ax.grid(True, lw=0.4, alpha=0.5, which="both")
+    _add_legend(ax, irf_ls=irf_ls, spore_ls=spore_ls, lw=lw, e_true_list=e_true_list)
+    plt.tight_layout()
+    out = out_dir / "ps10yr_psf.png"
+    plt.savefig(out, dpi=150)
+    print(f"Saved: {out}")
+    plt.close()
 
-ax.set_xscale("log")
-ax.set_xlim(0.1, 180)
-ax.set_ylim(-0.02, 1.05)
-ax.set_xlabel(r"$\psi$ [deg]", fontsize=12)
-ax.set_ylabel("CDF", fontsize=12)
-ax.set_title("PS-10yr track — PSF\nupgoing dec band (dec > 10°)", fontsize=11)
-ax.grid(True, lw=0.4, alpha=0.5, which="both")
-_add_legend(ax)
-plt.tight_layout()
-out = OUT_DIR / "ps10yr_psf.png"
-plt.savefig(out, dpi=150)
-print(f"Saved: {out}")
-plt.close()
+    # Figure 3: HESE energy smearing
+    fig, ax = plt.subplots(figsize=(6, 5))
+    x_irf_e, y_irf_e = hese_analytic_energy_cdf(hese_tables)
+    for e_true_gev, color in zip(e_true_list, COLORS):
+        log10et = np.log10(e_true_gev)
+        ax.plot(x_irf_e, y_irf_e,                  lw=lw, color=color, ls=irf_ls)
+        ax.plot(hese_energy_samp[log10et], cdf_u,  lw=lw, color=color, ls=spore_ls)
+    ax.axvline(0.0, color="gray", lw=0.8, ls=":")
+    ax.set_xlim(-5.0, 1.5)
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_xlabel(r"$\log_{10}(E_{\rm reco}\,/\,E_{\rm true})$", fontsize=12)
+    ax.set_ylabel("CDF", fontsize=12)
+    ax.set_title(
+        "HESE-7yr astro\\_cascade — energy smearing\n"
+        "(energy-independent IRF; all analytic curves overlap)",
+        fontsize=11,
+    )
+    ax.grid(True, lw=0.4, alpha=0.5)
+    _add_legend(ax, irf_ls=irf_ls, spore_ls=spore_ls, lw=lw, e_true_list=e_true_list)
+    plt.tight_layout()
+    out = out_dir / "hese_energy_smearing.png"
+    plt.savefig(out, dpi=150)
+    print(f"Saved: {out}")
+    plt.close()
 
-# ---------------------------------------------------------------------------
-# Figure 3: HESE energy smearing
-# ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(6, 5))
-x_irf_e, y_irf_e = hese_analytic_energy_cdf()
-for e_true_gev, color in zip(E_TRUE_GEV, COLORS):
-    log10et = np.log10(e_true_gev)
-    # analytic CDF is energy-independent — draw once per energy for legend pairing
-    ax.plot(x_irf_e, y_irf_e,                    lw=LW, color=color, ls=IRF_LS)
-    ax.plot(hese_energy_samp[log10et], cdf_u,    lw=LW, color=color, ls=SPORE_LS)
+    # Figure 4: HESE PSF
+    fig, ax = plt.subplots(figsize=(6, 5))
+    for e_true_gev, color in zip(e_true_list, COLORS):
+        log10et = np.log10(e_true_gev)
+        x_irf_p, y_irf_p = hese_analytic_psf_cdf(e_true_gev, hese_tables)
+        ax.plot(x_irf_p, y_irf_p,                lw=lw, color=color, ls=irf_ls)
+        ax.plot(hese_psf_samp[log10et], cdf_u,  lw=lw, color=color, ls=spore_ls)
+    ax.set_xscale("log")
+    ax.set_xlim(0.1, 60)
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_xlabel(r"$\psi$ [deg]", fontsize=12)
+    ax.set_ylabel("CDF", fontsize=12)
+    ax.set_title("HESE-7yr astro\\_cascade — PSF", fontsize=11)
+    ax.grid(True, lw=0.4, alpha=0.5, which="both")
+    _add_legend(ax, irf_ls=irf_ls, spore_ls=spore_ls, lw=lw, e_true_list=e_true_list)
+    plt.tight_layout()
+    out = out_dir / "hese_psf.png"
+    plt.savefig(out, dpi=150)
+    print(f"Saved: {out}")
+    plt.close()
 
-ax.axvline(0.0, color="gray", lw=0.8, ls=":")
-ax.set_xlim(-5.0, 1.5)
-ax.set_ylim(-0.02, 1.05)
-ax.set_xlabel(r"$\log_{10}(E_{\rm reco}\,/\,E_{\rm true})$", fontsize=12)
-ax.set_ylabel("CDF", fontsize=12)
-ax.set_title(
-    "HESE-7yr astro\\_cascade — energy smearing\n"
-    "(energy-independent IRF; all analytic curves overlap)",
-    fontsize=11,
-)
-ax.grid(True, lw=0.4, alpha=0.5)
-_add_legend(ax)
-plt.tight_layout()
-out = OUT_DIR / "hese_energy_smearing.png"
-plt.savefig(out, dpi=150)
-print(f"Saved: {out}")
-plt.close()
 
-# ---------------------------------------------------------------------------
-# Figure 4: HESE PSF
-# ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(6, 5))
-for e_true_gev, color in zip(E_TRUE_GEV, COLORS):
-    log10et = np.log10(e_true_gev)
-    x_irf_p, y_irf_p = hese_analytic_psf_cdf(e_true_gev)
-    ax.plot(x_irf_p, y_irf_p,                  lw=LW, color=color, ls=IRF_LS)
-    ax.plot(hese_psf_samp[log10et], cdf_u,     lw=LW, color=color, ls=SPORE_LS)
+def main(ps_response_path=PS_RESPONSE, hese_response_path=HESE_RESPONSE,
+         out_dir=OUT_DIR, e_true_list=E_TRUE_GEV, n_samples=N_SAMPLES, seed=RNG_SEED):
+    """Run the full IRF validation: sample, then generate all four figures."""
+    for name in ["astro_cascade", "astro_track", "atmo_cascade",
+                 "atmo_track", "astro_doublebang"]:
+        Morphology.register(name)
 
-ax.set_xscale("log")
-ax.set_xlim(0.1, 60)
-ax.set_ylim(-0.02, 1.05)
-ax.set_xlabel(r"$\psi$ [deg]", fontsize=12)
-ax.set_ylabel("CDF", fontsize=12)
-ax.set_title("HESE-7yr astro\\_cascade — PSF", fontsize=11)
-ax.grid(True, lw=0.4, alpha=0.5, which="both")
-_add_legend(ax)
-plt.tight_layout()
-out = OUT_DIR / "hese_psf.png"
-plt.savefig(out, dpi=150)
-print(f"Saved: {out}")
-plt.close()
+    ps_det = Detector.from_config({
+        "properties": {"latitude": -90.0, "longitude": 0.0, "medium": "Ice"},
+        "response":   {"detector_response_file": str(ps_response_path)},
+    })
+    hese_det = Detector.from_config({
+        "properties": {"latitude": -90.0, "longitude": 0.0, "medium": "Ice"},
+        "response":   {"detector_response_file": str(hese_response_path)},
+    })
+
+    ps_tables   = load_ps_tables(ps_response_path)
+    hese_tables = load_hese_tables(hese_response_path)
+
+    ps_energy_samp, ps_psf_samp, hese_energy_samp, hese_psf_samp = draw_samples(
+        ps_det, hese_det, e_true_list=e_true_list, n_samples=n_samples, seed=seed
+    )
+
+    make_figures(
+        ps_tables, hese_tables,
+        ps_energy_samp, ps_psf_samp, hese_energy_samp, hese_psf_samp,
+        e_true_list=e_true_list, out_dir=out_dir,
+    )
+
+
+if __name__ == "__main__":
+    import matplotlib
+    matplotlib.use("Agg")
+    main()

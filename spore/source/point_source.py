@@ -6,6 +6,7 @@ from ..conventions import SkyCoordinate
 from . import Neutrino
 from .source import Source
 from .flux import Flux
+from ..config import load_config
 
 class PointSource(Source):
     """A neutrino point source at a fixed sky location.
@@ -41,6 +42,7 @@ class PointSource(Source):
         Returns:
             A configured PointSource instance.
         """
+        config = load_config(config)
         location = SkyCoordinate(
             np.radians(config["location"]["declination"]),
             np.radians(config["location"]["right_ascension"])

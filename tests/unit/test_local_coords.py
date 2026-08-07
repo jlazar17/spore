@@ -20,7 +20,10 @@ from spore.event_sampling.utils import (
     _local_coords_from_times,
 )
 
-_J2000_MJD = 51545.0
+# J2000 epoch: JD 2451545.0 = 2000-01-01 12:00 = MJD 51544.5.
+# Imported from the module rather than restated, so this file cannot drift
+# from the constant the GMST polynomial is actually expanded about.
+from spore.event_sampling.utils import _J2000_MJD
 
 
 # ---------------------------------------------------------------------------

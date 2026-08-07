@@ -2,7 +2,7 @@ import numpy as np
 
 from typing import List, Optional, Union
 
-from ..conventions import SkyCoordinate, sky_to_local, ureg
+from ..conventions import SkyCoordinate, sky_to_local
 from ..physics import neutrinos, Morphology
 from ..source import PointSource
 from ..detector import Detector
@@ -10,10 +10,12 @@ from ..detector import Detector
 from .event import Event
 from .event_sampler import EventSampler
 from .utils import (
-    smear_truth_batch, build_adaptive_log_energy_grid,
-    _effa_grid_from_lst, _mjd_to_lst, _assign_times_from_slices, _SIDEREAL_DAY,
-    _local_zeniths_from_times, _local_coords_from_times,
+    smear_truth_batch,
+    _assign_times_from_slices,
+    _local_coords_from_times, _sample_times_in_slices,
+    _grl_slice_weights, _grl_mean_rate, resolve_energy_bounds,
 )
+from ..detector.detector_response.utils import _largest_contiguous_nonzero
 
 
 class PointSourceEventSampler(EventSampler):
@@ -95,52 +97,77 @@ class PointSourceEventSampler(EventSampler):
             self._steady_state = steady_state
         self._n_time_samples = n_time_samples if n_time_samples is not None else 100
 
-        from .utils import _effa_energy_bounds
-        first_morph = sorted(det.response.effective_area)[0]
-        first_effa  = det.response.effective_area[first_morph]
-        _irf_lo, _irf_hi = _effa_energy_bounds(first_effa)
-        _src_lo = getattr(getattr(src, 'flux', None), 'e_min_gev', None)
-        _src_hi = getattr(getattr(src, 'flux', None), 'e_max_gev', None)
-        _e_min = e_min if e_min is not None else (max(_irf_lo, _src_lo) if _src_lo is not None else _irf_lo)
-        _e_max = e_max if e_max is not None else (min(_irf_hi, _src_hi) if _src_hi is not None else _irf_hi)
-        log_es = build_adaptive_log_energy_grid(
-            n_e, first_effa, src, first_morph, e_min=_e_min, e_max=_e_max,
+        _e_min, _e_max = resolve_energy_bounds(det, src, e_min, e_max)
+        self._es = np.clip(
+            np.exp(np.linspace(np.log(_e_min), np.log(_e_max), n_e)), _e_min, _e_max
         )
-        self._es = np.clip(np.exp(log_es), _e_min, _e_max)
         self._cache = {}
 
+    def _eval_effa(self, effa_fn, zen: float) -> np.ndarray:
+        """Evaluate an effective area on the energy grid at fixed zenith.
+
+        Returns a (n_e,) array for a single-species response, or a (6, n_e)
+        array when the response file resolves the six neutrino species
+        separately (as the HESE 7.5-yr release does).
+        """
+        zens = np.full(len(self._es), float(zen))
+        if isinstance(effa_fn, list):
+            return np.array([fn(zens, self._es) for fn in effa_fn])
+        return effa_fn(zens, self._es)
+
     def _build_cdf(self, morphology: str, effas: np.ndarray):
-        """Build and cache the (spline, norm) pair for the given effective areas."""
-        if Morphology.flavor_set(morphology) == "numu":
-            fluxes = np.array([
-                self._src(neutrinos[2], e) + self._src(neutrinos[3], e)
-                for e in self._es
-            ])
+        """Build and cache the (spline, norm) pair for the given effective areas.
+
+        ``effas`` is either a 1-D array over the energy grid (single-species
+        response) or a (6, n_e) array (per-species response), in which case
+        each species is weighted by its own effective area rather than by the
+        morphology-level flavour heuristic.
+        """
+        effas = np.asarray(effas)
+        if effas.ndim == 2:
+            # Per-species response: sum_species A_eff^(s)(E) * Phi^(s)(E).
+            vals = np.zeros(len(self._es))
+            for idx_sp, nu in enumerate(neutrinos):
+                flux_sp = np.array([self._src(nu, e) for e in self._es])
+                vals += effas[idx_sp] * flux_sp
+            effas_1d = effas.sum(axis=0)
         else:
-            fluxes = np.array([
-                sum(self._src(nu, e) for nu in neutrinos)
-                for e in self._es
-            ])
+            if Morphology.flavor_set(morphology) == "numu":
+                fluxes = np.array([
+                    self._src(neutrinos[2], e) + self._src(neutrinos[3], e)
+                    for e in self._es
+                ])
+            else:
+                fluxes = np.array([
+                    sum(self._src(nu, e) for nu in neutrinos)
+                    for e in self._es
+                ])
+            vals = effas * fluxes
+            effas_1d = effas
 
-        # Trim to energies where the effective area is non-zero.
-        zeros = np.where(effas == 0)[0]
-        idx = zeros[-1] if len(zeros) > 0 else -1
-        es = self._es[idx + 1:]
-        effas_trim = effas[idx + 1:]
-        fluxes_trim = fluxes[idx + 1:]
+        # Restrict to the largest contiguous run of non-zero effective area.
+        # Using the last zero index instead would discard the whole valid
+        # range whenever the response also has trailing zeros above its
+        # sensitivity ceiling.
+        run = _largest_contiguous_nonzero(effas_1d)
+        if run is None:
+            return None, 0.0
+        lo, hi = run
+        es = self._es[lo:hi + 1]
+        _vals_trim = vals[lo:hi + 1]
 
-        if len(es) == 0:
+        if len(es) < 2:
             return None, 0.0
 
         from scipy.integrate import quad
         from scipy.interpolate import PchipInterpolator
 
-        integrand = lambda le: np.exp(le) * np.interp(
-            np.exp(le), es, effas_trim * fluxes_trim
-        )
+        _log_es = np.log(es)
+        _vals   = _vals_trim
+        integrand = lambda le: np.exp(le) * np.interp(le, _log_es, _vals)
         cdfs = np.concatenate([
             [0],
-            [quad(integrand, np.log(es[0]), np.log(e))[0] for e in es[1:]],
+            [quad(integrand, np.log(es[0]), np.log(e), limit=200)[0] for e in es[1:]],
         ])
 
         # Deduplicate to ensure strict monotonicity.
@@ -178,7 +205,7 @@ class PointSourceEventSampler(EventSampler):
                     np.sin(lat) * np.sin(dec) + np.cos(lat) * np.cos(dec) * np.cos(ha),
                     -1.0, 1.0,
                 )))
-                effas = effa_fn(np.full(len(self._es), zen), self._es)
+                effas = self._eval_effa(effa_fn, zen)
                 spl, norm = self._build_cdf(morphology, effas)
                 slice_cdfs.append(spl)
                 norms.append(norm)
@@ -196,7 +223,7 @@ class PointSourceEventSampler(EventSampler):
         else:
             lc = sky_to_local(self._src.location, self._det.location, t)
             effa_fn = self._det.response.effective_area[morphology]
-            effas = effa_fn(np.full(len(self._es), lc.zenith), self._es)
+            effas = self._eval_effa(effa_fn, lc.zenith)
             self._cache[cache_key] = self._build_cdf(morphology, effas)
 
     def _get_cached(self, morphology: str, t: float):
@@ -208,6 +235,7 @@ class PointSourceEventSampler(EventSampler):
         morphology: str,
         deltat,
         t: Optional[float] = None,
+        grl=None,
     ):
         if t is None:
             t = self._t0
@@ -218,8 +246,19 @@ class PointSourceEventSampler(EventSampler):
             )
         self._ensure_cached(morphology, t)
         cached = self._get_cached(morphology, t)
-        norm = cached["norm"] if isinstance(cached, dict) else cached[1]
+        norm = self._mean_rate(cached, grl)
         return norm * deltat.to('s').magnitude
+
+    def _mean_rate(self, cached, grl):
+        """Mean rate [s^-1]: exposure-weighted across slices when a GRL is given."""
+        if not isinstance(cached, dict):
+            return cached[1]
+        if grl is None:
+            return cached["norm"]
+        return _grl_mean_rate(
+            cached["norms"], grl, self._det.location.longitude,
+            phase_ref=cached["_ra_src"],
+        )
 
     def _sample_events_single(
         self,
@@ -286,21 +325,30 @@ class PointSourceEventSampler(EventSampler):
             ra_src     = cached["_ra_src"]
 
             if nevent is None:
-                nevent = rng.poisson(mean_norm * deltat.to('s').magnitude)
+                rate = self._mean_rate(cached, grl)
+                nevent = rng.poisson(rate * deltat.to('s').magnitude)
             if nevent == 0:
                 return []
 
+            lon = self._det.location.longitude
             if grl is not None:
-                # Draw times from GRL, derive slice index from hour angle at each time.
-                event_times = grl.sample_times(nevent, rng)
-                lon  = self._det.location.longitude
-                lsts = _mjd_to_lst(event_times, lon)
-                ha   = (lsts - ra_src) % (2 * np.pi)
-                k_arr = (ha / (2 * np.pi) * n_slices).astype(int) % n_slices
+                # Choose the hour-angle slice from rate x exposure, then draw a
+                # time from the run list conditioned on that slice.
+                k_arr = rng.choice(
+                    n_slices, size=nevent,
+                    p=_grl_slice_weights(cached["norms"], grl, lon,
+                                         phase_ref=ra_src),
+                )
+                event_times = _sample_times_in_slices(
+                    grl, k_arr, n_slices, rng, lon, phase_ref=ra_src,
+                )
             else:
                 k_arr = rng.choice(n_slices, size=nevent, p=weights)
                 if deltat is not None:
-                    event_times = _assign_times_from_slices(t, deltat, k_arr, n_slices, rng)
+                    event_times = _assign_times_from_slices(
+                        t, deltat, k_arr, n_slices, rng,
+                        longitude=lon, phase_ref=ra_src,
+                    )
                 else:
                     event_times = np.full(nevent, t)
 

@@ -6,13 +6,14 @@ Reads the effective area and joint smearing from the data-release CSVs,
 averages across all IC86 seasons, and writes a single HDF5 file in the
 spore hierarchical format::
 
+    meta/
+        smoothing_sigma  (float attr)
+        trim_isolated    (bool attr)
     track/
         effective_area/
             energies         (n_e,)    GeV
             zeniths          (n_dec,)  radians
             tabulated_values (n_e, n_dec)  cm²
-            lower_bounds     (1, 1)
-            upper_bounds     (1, 1)
         smearing/
             log10e_true_edges  (15,)
             dec_edges          (4,)    degrees — kept for reference
@@ -64,7 +65,7 @@ _ALL_SEASONS = [
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_IRF_DIR = os.path.join(_HERE, "..", "resources", "data_releases",
                                 "ps10yr_data_release", "irfs")
-_DEFAULT_OUTPUT  = os.path.join(_HERE, "..", "resources", "ps10yr_detector_response.h5")
+_DEFAULT_OUTPUT  = os.path.join(_HERE, "..", "resources", "configs", "ps10yr_detector_response.h5")
 
 
 def _irf_stems(seasons):
@@ -78,7 +79,14 @@ def _irf_stems(seasons):
 def build(irf_dir: str, output_path: str) -> None:
     stems = _irf_stems(_ALL_SEASONS)
 
+    SMOOTHING_SIGMA = 1.3
+    TRIM_ISOLATED   = True
+
     with h5py.File(output_path, "w") as hf:
+        meta = hf.require_group("meta")
+        meta.attrs["smoothing_sigma"] = SMOOTHING_SIGMA
+        meta.attrs["trim_isolated"]   = TRIM_ISOLATED
+
         grp = hf.require_group("track")
 
         # ── Effective area ───────────────────────────────────────────────
@@ -97,15 +105,11 @@ def build(irf_dir: str, output_path: str) -> None:
         # -cos(zen), so this is a pure axis relabeling — no averaging applied.
         energies_gev = 10.0 ** log10e_c
         zeniths_rad  = np.arccos(-sindec_c)
-        lower_bounds = np.array([[log10e_c[0]]])
-        upper_bounds = np.array([[log10e_c[-1]]])
 
         ea_grp = grp.require_group("effective_area")
         ea_grp.create_dataset("energies",         data=energies_gev)
         ea_grp.create_dataset("zeniths",          data=zeniths_rad)
         ea_grp.create_dataset("tabulated_values", data=aeff_avg)
-        ea_grp.create_dataset("lower_bounds",     data=lower_bounds)
-        ea_grp.create_dataset("upper_bounds",     data=upper_bounds)
         print(f"  Wrote track/effective_area  "
               f"(shape {aeff_avg.shape}, max={aeff_avg.max():.3e} cm²)")
 

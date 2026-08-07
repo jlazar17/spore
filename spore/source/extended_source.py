@@ -1,10 +1,10 @@
-import numpy as np
 
 from typing import Dict
 
 from . import Neutrino
 from .source import Source
 from .flux import Flux
+from ..config import load_config
 
 class ExtendedSource(Source):
     """A spatially extended neutrino source with a 2D or 3D flux model.
@@ -43,6 +43,7 @@ class ExtendedSource(Source):
         Returns:
             A configured ExtendedSource instance.
         """
+        config = load_config(config)
         if "location" in config.keys():
             import logging
             logging.getLogger(__name__).warning(

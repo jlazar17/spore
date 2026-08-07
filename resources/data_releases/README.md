@@ -14,7 +14,7 @@ The paper plot scripts in `scripts/paper_plots/` look for data under
 **Directory:** `resources/data_releases/ps10yr_data_release/`
 
 **Used by:** `scripts/paper_plots/pstracks_roundtrip.py`,
-`scripts/paper_plots/pstracks_eddington.py`
+`scripts/paper_plots/point_source_demo.py`
 
 **Description:** IceCube 10-year time-integrated point-source sample
 (IC40 through IC86-2017).  Contains per-season event files, detector uptime

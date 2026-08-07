@@ -25,6 +25,11 @@ scripts/paper_plots/*.pdf
 scripts/paper_plots/*.png
 scripts/paper_plots/*.h5
 
+# Artifacts the example scripts write beside themselves: cached flux and
+# J-factor grids (leading underscore) and the figures they render.
+examples/_*.h5
+examples/*.png
+
 # scratch directory (local working copies of removed scripts)
 scratch/
 

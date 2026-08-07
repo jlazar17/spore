@@ -21,8 +21,6 @@ AST_H5  = os.path.join(REPO, "resources", "ps10yr_combined_flux.h5")
 STYLE   = os.path.join(REPO, "resources", "paper.mplstyle")
 OUTFILE = os.path.join(REPO, "resources", "plotting_data.h5")
 
-plt.style.use(STYLE)
-
 IC86_EVENTS = {
     'IC86_I':   'IC86_I_exp.csv',   'IC86_II':  'IC86_II_exp.csv',
     'IC86_III': 'IC86_III_exp.csv', 'IC86_IV':  'IC86_IV_exp.csv',
@@ -30,6 +28,28 @@ IC86_EVENTS = {
     'IC86_VII': 'IC86_VII_exp-1.csv',
 }
 IC86_SEASONS = ['IC86_I', 'IC86_II', 'IC86_III', 'IC86_IV', 'IC86_V', 'IC86_VI', 'IC86_VII']
+
+# Base seed for the pseudo-experiments; each iteration gets SEED + offset + pe.
+SEED           = 0
+ATMO_FIT_OFF   = 0
+ATMO_SEED_OFF  = 100_000
+ASTRO_SEED_OFF = 200_000
+
+
+def _reco_sindecs(events):
+    """sin(reco declination) for a list of events, as a float array."""
+    return np.sin(np.fromiter(
+        (e.reco_direction.declination for e in events), float, len(events)
+    ))
+
+
+def _reco_energies(events):
+    """Reconstructed energies [GeV] for a list of events, as a float array.
+
+    Reads the cached scalar rather than the ``reco_energy`` property: building
+    one pint Quantity per event costs ~30 s for a full IC86 sample.
+    """
+    return np.fromiter((e._reco_e for e in events), float, len(events))
 
 
 def poisson_llh(n, mu):
@@ -50,16 +70,20 @@ def poisson_llh(n, mu):
 
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    plt.style.use(STYLE)
+
     det = Detector.from_config({
         "properties": {"latitude": -90.0, "longitude": 0.0, "depth": 1945, "medium": "Ice"},
         "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
     })
 
-    atmo_flux_models = "honda2006 mceq_gsf_sibyll23d mceq_h3a_sibyll23d mceq_h4a_sibyll23d".split()
+    atmo_flux_model = "mceq_gsf_sibyll23d"
 
-    atmo_srcs = [ExtendedSource.from_config({
-        "flux": {"location": f"{ATM_H5}:{flux_model}"}
-    }) for flux_model in atmo_flux_models]
+    atmo_src = ExtendedSource.from_config({
+        "flux": {"location": f"{ATM_H5}:{atmo_flux_model}"}
+    })
 
     astro_src = ExtendedSource.from_config({
         "flux": {"location": f"{AST_H5}:astrophysical"}
@@ -70,7 +94,6 @@ if __name__ == "__main__":
         for f in IC86_EVENTS.values()
     ])
 
-    log10e = all_ev[:, 1]           # log10(E_reco / GeV)
     sindec = np.sin(np.radians(all_ev[:, 4]))
 
     total_days = 0
@@ -80,65 +103,89 @@ if __name__ == "__main__":
         total_days += (ut[:, 1] - ut[:, 0]).sum()
 
     T_OBS = ureg.Quantity(total_days, "day")
-    print(f"IC86 livetime: {total_days:.1f} days")
+    logging.info("IC86 livetime: %.1f days", total_days)
 
-    e_bins  = np.logspace(1, 8, 36)
-    e_cents = (e_bins[1:] + e_bins[:-1]) / 2
+    sd_bins  = np.linspace(0, 1, 21)
+    sd_cents = (sd_bins[1:] + sd_bins[:-1]) / 2
 
-    h_data, _ = np.histogram(np.power(10, log10e)[sindec > 0], bins=e_bins)
+    # Energy proxy binning for the second panel; the data release stores
+    # log10(E/GeV) in column 1.
+    e_bins  = np.logspace(2, 6, 33)
+    e_cents = np.sqrt(e_bins[1:] * e_bins[:-1])
+
+    north = sindec > 0
+    h_data,   _ = np.histogram(sindec[north], bins=sd_bins)
+    h_data_e, _ = np.histogram(10 ** all_ev[north, 1], bins=e_bins)
 
     N = 40
-    norms = []
-    atmo_samplers = [
-        SourceSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
-        for atmo_src in atmo_srcs
-    ]
-    for atmo_sampler in atmo_samplers:
-        h_atmo = np.zeros(e_cents.shape)
-        for _ in range(N):
-            atmo_events = atmo_sampler.sample_events("track", deltat=T_OBS)
-            atmo_reco_e_gev = np.array([e.reco_energy.to('GeV').magnitude for e in atmo_events])
-            atmo_reco_decs  = np.array([e.reco_direction.declination for e in atmo_events])
-            _h_atmo, _ = np.histogram(atmo_reco_e_gev[atmo_reco_decs > 0], bins=e_bins)
-            h_atmo += _h_atmo
-        h_atmo /= N
+    logging.info("Building initial atmo sampler …")
+    atmo_sampler = SourceSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
 
-        h = abs(poisson_llh(h_data, h_atmo))
-        f = lambda x: -poisson_llh(h_data, x * h_atmo) / h
-        res = minimize(f, 1.0, method='L-BFGS-B')
-        norms.append(float(res.x[0]))
+    logging.info("Fitting atmo normalisation (%d pseudo-experiments) …", N)
+    h_atmo = np.zeros(sd_cents.shape)
+    for pe in range(N):
+        if pe % 10 == 0:
+            logging.info("  pseudo-exp %d/%d", pe, N)
+        atmo_events = atmo_sampler.sample_events(
+            "track", deltat=T_OBS, seed=SEED + ATMO_FIT_OFF + pe
+        )
+        atmo_reco_sindecs = _reco_sindecs(atmo_events)
+        _h_atmo, _ = np.histogram(atmo_reco_sindecs[atmo_reco_sindecs > 0], bins=sd_bins)
+        h_atmo += _h_atmo
+    h_atmo /= N
 
-    atmo_srcs = [ExtendedSource.from_config(
-        {"flux": {"location": f"{ATM_H5}:{flux_model}"}},
-        normalization=norm
-    ) for (flux_model, norm) in zip(atmo_flux_models, norms)]
+    h = abs(poisson_llh(h_data, h_atmo))
+    f = lambda x: -poisson_llh(h_data, x * h_atmo) / h
+    res = minimize(f, 1.0, method='L-BFGS-B')
+    norm = float(res.x[0])
+    logging.info("  norm = %.4f", norm)
 
-    atmo_samplers = [
-        SourceSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
-        for atmo_src in atmo_srcs
-    ]
+    atmo_src = ExtendedSource.from_config(
+        {"flux": {"location": f"{ATM_H5}:{atmo_flux_model}"}},
+        normalization=norm,
+    )
+
+    logging.info("Rebuilding atmo sampler with fitted norm …")
+    atmo_sampler = SourceSampler(det, atmo_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
+    logging.info("Building astro sampler …")
     astro_sampler = SourceSampler(det, astro_src, n_time_samples=50, n_dec=100, n_ra=100, n_e=100)
 
-    h_atmos = np.zeros(e_cents.shape + (4,))
+    logging.info("Sampling atmo (%d pseudo-experiments) …", N)
+    h_atmo_sum   = np.zeros(sd_cents.shape)
+    h_atmo_e_sum = np.zeros(e_cents.shape)
+    for pe in range(N):
+        if pe % 10 == 0:
+            logging.info("  pseudo-exp %d/%d", pe, N)
+        atmo_events       = atmo_sampler.sample_events(
+            "track", deltat=T_OBS, seed=SEED + ATMO_SEED_OFF + pe
+        )
+        atmo_reco_sindecs = _reco_sindecs(atmo_events)
+        up = atmo_reco_sindecs > 0
+        _h_atmo, _ = np.histogram(atmo_reco_sindecs[up], bins=sd_bins)
+        h_atmo_sum += _h_atmo
+        # Same northern-sky selection as the declination panel.
+        _h_atmo_e, _ = np.histogram(_reco_energies(atmo_events)[up], bins=e_bins)
+        h_atmo_e_sum += _h_atmo_e
+    h_atmo   = h_atmo_sum / N
+    h_atmo_e = h_atmo_e_sum / N
 
-    for (idx, sampler) in enumerate(atmo_samplers):
-        h_atmo_sum = np.zeros(e_cents.shape)
-        for _ in range(N):
-            atmo_events     = sampler.sample_events("track", deltat=T_OBS)
-            atmo_reco_e_gev = np.array([e.reco_energy.to('GeV').magnitude for e in atmo_events])
-            atmo_reco_decs  = np.array([e.reco_direction.declination for e in atmo_events])
-            _h_atmo, _ = np.histogram(atmo_reco_e_gev[atmo_reco_decs > 0], bins=e_bins)
-            h_atmo_sum += _h_atmo
-        h_atmos[:, idx] = h_atmo_sum / N
-
-    h_astro_sum = np.zeros(e_cents.shape)
-    for _ in range(N):
-        astro_events     = astro_sampler.sample_events("track", deltat=T_OBS)
-        astro_reco_decs  = np.array([e.reco_direction.declination     for e in astro_events])
-        astro_reco_e_gev = np.array([e.reco_energy.to('GeV').magnitude for e in astro_events])
-        _h_astro, _ = np.histogram(astro_reco_e_gev[astro_reco_decs > 0], bins=e_bins)
+    logging.info("Sampling astro (%d pseudo-experiments) …", N)
+    h_astro_sum   = np.zeros(sd_cents.shape)
+    h_astro_e_sum = np.zeros(e_cents.shape)
+    for pe in range(N):
+        if pe % 10 == 0:
+            logging.info("  pseudo-exp %d/%d", pe, N)
+        astro_events       = astro_sampler.sample_events(
+            "track", deltat=T_OBS, seed=SEED + ASTRO_SEED_OFF + pe
+        )
+        astro_reco_sindecs = _reco_sindecs(astro_events)
+        up = astro_reco_sindecs > 0
+        _h_astro, _ = np.histogram(astro_reco_sindecs[up], bins=sd_bins)
         h_astro_sum += _h_astro
-    h_astro = h_astro_sum / N
+        _h_astro_e, _ = np.histogram(_reco_energies(astro_events)[up], bins=e_bins)
+        h_astro_e_sum += _h_astro_e
+    h_astro   = h_astro_sum / N
+    h_astro_e = h_astro_e_sum / N
 
     if not os.path.exists(OUTFILE):
         with h5.File(OUTFILE, "w") as h5f:
@@ -148,7 +195,11 @@ if __name__ == "__main__":
         if "figure_5" in h5f.keys():
             del h5f["figure_5"]
         gp = h5f.create_group("figure_5")
-        gp["e_cents"] = e_cents
-        gp["h_atmos"] = h_atmos
-        gp["h_astro"] = h_astro
-        gp["h_data"]  = h_data
+        gp["sd_cents"]  = sd_cents
+        gp["h_atmo"]    = h_atmo
+        gp["h_astro"]   = h_astro
+        gp["h_data"]    = h_data
+        gp["e_cents"]   = e_cents
+        gp["h_atmo_e"]  = h_atmo_e
+        gp["h_astro_e"] = h_astro_e
+        gp["h_data_e"]  = h_data_e

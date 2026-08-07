@@ -105,6 +105,41 @@ class GoodRunList:
     # Sampling
     # ------------------------------------------------------------------
 
+    def lst_exposure(self, longitude: float, n_slices: int,
+                     phase_ref: float = 0.0) -> np.ndarray:
+        """Fraction of the livetime falling in each sidereal-phase slice.
+
+        A run list need not cover the sidereal cycle uniformly, so the mean
+        rate over a good run list is the exposure-weighted mean over slices,
+        not the plain mean.  Computed deterministically by walking each run in
+        steps that are short compared to a slice.
+
+        Args:
+            longitude: Detector east longitude in radians.
+            n_slices: Number of sidereal-phase slices.
+            phase_ref: Offset in radians between LST and the slice variable
+                (the source right ascension for hour-angle slices).
+
+        Returns:
+            ndarray of shape ``(n_slices,)`` summing to 1.
+        """
+        from .utils import _slice_indices_from_times, _SIDEREAL_DAY
+
+        step = _SIDEREAL_DAY / (4.0 * n_slices)
+        out = np.zeros(n_slices)
+        for start, stop in self._runs:
+            duration = stop - start
+            if duration <= 0:
+                continue
+            n_step = max(1, int(np.ceil(duration / step)))
+            edges = np.linspace(start, stop, n_step + 1)
+            mids = 0.5 * (edges[1:] + edges[:-1])
+            widths = np.diff(edges)
+            k = _slice_indices_from_times(mids, longitude, n_slices, phase_ref)
+            np.add.at(out, k, widths)
+        total = out.sum()
+        return out / total if total > 0 else np.full(n_slices, 1.0 / n_slices)
+
     def sample_times(self, n: int, rng: np.random.Generator) -> np.ndarray:
         """Draw ``n`` MJD arrival times uniformly distributed within good runs.
 
