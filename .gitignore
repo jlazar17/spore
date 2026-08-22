@@ -1,6 +1,8 @@
 **/.ipynb_checkpoints/*
 **/__pycache__/*
 **/Untitled*.ipynb
+**/.DS_Store
+.pytest_cache/
 paper/
 _dm_backup/
 .claude/
