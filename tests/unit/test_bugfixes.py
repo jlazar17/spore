@@ -235,3 +235,39 @@ class TestSmearTruthZenithFallback:
         _, reco_e, _ = smear_truth(sc, 1e4, det, "track",
                                    rng=np.random.default_rng(0))
         assert np.isfinite(reco_e.magnitude)
+
+
+class TestSmearingAngularUnits:
+    """The smearing group stores its angular axes in degrees, not radians.
+
+    A file written in radians indexes a valid band regardless -- every
+    declination collapses into the middle one -- so it has to be rejected at
+    load time rather than silently mis-banded.
+    """
+
+    def test_radian_dec_edges_rejected(self, tmp_path):
+        import h5py
+        from spore.detector.detector_response.detector_response import (
+            smearing_sampler_from_group,
+        )
+        from tests.conftest import _write_response
+
+        path = tmp_path / "radians.h5"
+        _write_response(
+            path,
+            tabulated_values=np.ones((3, 4)),
+            zeniths=np.linspace(0.1, 3.0, 4),
+            energies=np.logspace(2, 5, 3),
+            joint_smearing=True,
+        )
+        with h5py.File(path, "r+") as f:
+            g = f["track/smearing"]
+            deg = g["dec_edges"][:]
+            del g["dec_edges"]
+            g.create_dataset("dec_edges", data=np.radians(deg))
+            with pytest.raises(ValueError, match="looks like radians"):
+                smearing_sampler_from_group(g)
+
+    def test_degree_dec_edges_accepted(self, joint_smearing_detector_factory):
+        det = joint_smearing_detector_factory(latitude_deg=-90.0)
+        assert det.response.joint_smearing is not None

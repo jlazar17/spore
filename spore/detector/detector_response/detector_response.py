@@ -296,6 +296,21 @@ def smearing_sampler_from_group(gp: h5.Group) -> Callable:
         fractional counts over a 5-D histogram.
     """
     dec_edges_raw = gp['dec_edges'][:]
+    # The angular axes of this group are in degrees, unlike every other angle
+    # in the response format.  A file written in radians would still index a
+    # valid band here -- every declination would collapse into the middle one
+    # -- and fail silently, so reject it up front.
+    # Any valid declination in radians satisfies |dec| <= pi/2, so that bound
+    # catches every radian-valued file while only rejecting a degree-valued
+    # one that spans under 1.6 degrees of sky.
+    if np.nanmax(np.abs(dec_edges_raw)) <= 0.5 * np.pi + 1e-6:
+        raise ValueError(
+            "Smearing 'dec_edges' span "
+            f"[{np.nanmin(dec_edges_raw):.4f}, {np.nanmax(dec_edges_raw):.4f}], "
+            "which looks like radians. The smearing group stores its angular "
+            "axes (dec_edges, zenith_edges, psf_*, ang_err_*) in DEGREES; "
+            "convert with np.degrees before writing the file."
+        )
     if 'zenith_edges' in gp:
         zenith_edges = gp['zenith_edges'][:]
     else:
