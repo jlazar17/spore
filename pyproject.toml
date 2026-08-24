@@ -28,6 +28,7 @@ pint = "^0.25"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
+colorspacious = "^1.1.2"
 tqdm = "^4.66.4"
 matplotlib = "^3.9.1"
 ipykernel = "^6.29.5"

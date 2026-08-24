@@ -15,8 +15,9 @@ paper.mplstyle
 examples/output/*
 !examples/output/.gitkeep
 
-# Generated/cached HDF5 artifacts
-resources/plotting_data.h5
+# Generated/cached HDF5 artifacts.  plotting_data.h5 is deliberately tracked:
+# it is small (~70 kB) and lets the paper figures be re-rendered from a clean
+# clone without re-running the samplers or downloading the data releases.
 resources/example_detector_response_old.h5
 
 # Data releases (large, not distributed with the package).  The paper_plots
