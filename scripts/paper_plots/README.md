@@ -49,30 +49,43 @@ These files are read directly from the repository's `resources/` directory:
 | `ps10yr_combined_flux.h5` | Combined astrophysical + atmospheric flux for PS tracks |
 | `paper.mplstyle` | Matplotlib style sheet for paper figures |
 | `configs/ps10yr_detector_response.h5` | PS-10yr detector IRF (hierarchical HDF5) |
-| `plotting_data.h5` | Pre-computed data cached between figure scripts |
+| `plotting_data.h5` | Pre-computed figure data; tracked, so `plots.py` runs standalone |
 
 ## Workflow
 
-Each script computes data and saves it to `resources/plotting_data.h5`.
-The actual figure rendering is done by `paper/plots.py`, which reads from
-that file:
+Each data script samples events and writes its results into
+`resources/plotting_data.h5`.  `plots.py` reads that file and renders the
+figures; it does no sampling of its own.
+
+**A populated `resources/plotting_data.h5` is tracked in the repository**, so
+the figures can be reproduced from a fresh clone with no external downloads:
 
 ```
-# 1. Run the data scripts (slow — samples events and builds templates)
+python scripts/paper_plots/plots.py            # -> figures/*.pdf
+```
+
+Both arguments are optional: `--datafile` defaults to the tracked
+`resources/plotting_data.h5` and `--outdir` to `figures/` at the repository
+root.  To regenerate the underlying data instead (slow, and this is the step
+that needs the data releases above):
+
+```
+# 1. Recompute the cached data
 python scripts/paper_plots/hese_comparison.py
 python scripts/paper_plots/pstracks_roundtrip.py
 python scripts/paper_plots/multidetector_skymap.py
 python scripts/paper_plots/effective_area.py
 python scripts/paper_plots/point_source_demo.py
 
-# 2. Render all figures (fast — reads cached data)
-cd paper && python plots.py --datafile ../resources/plotting_data.h5
+# 2. Re-render from the refreshed cache
+python scripts/paper_plots/plots.py --outdir paper/figures
 ```
 
 ## Scripts
 
 | Script | HDF5 group written | Description |
 |--------|--------------------|-------------|
+| `plots.py` | *(reads only)* | Renders every figure in the paper from the cached data |
 | `hese_comparison.py` | `figure_4` | HESE 7.5-year comparison: energy spectrum and LLH test statistic |
 | `pstracks_roundtrip.py` | `figure_5` | PS tracks 10-year round-trip: declination and energy-proxy distributions vs IC86 data |
 | `multidetector_skymap.py` | `multidetector_skymap` | (RA, sin δ) samples for IceCube and KM3NeT, instantaneous and diurnal-average |
