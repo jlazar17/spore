@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Generate neutrino events from dark matter annihilation or decay in the Galactic Halo.
 

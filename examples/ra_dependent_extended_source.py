@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Example: RA-dependent extended source via a custom Distribution subclass.
 

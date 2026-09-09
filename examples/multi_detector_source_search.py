@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Multi-detector point source search example.
 

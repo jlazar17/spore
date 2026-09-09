@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Eddington bias: demonstration and correction.
 
