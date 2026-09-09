@@ -4,17 +4,17 @@ This script produces two figures that document the two tunable HDF5 metadata
 parameters that control how effective areas are loaded and pre-processed:
 
   effa_trim_isolated.png
-      Side-by-side comparison of the PS-10yr track effective area with
+      Side-by-side comparison of the PS-14yr track effective area with
       ``trim_isolated=True`` (default) and ``trim_isolated=False``.  Shows
       the isolated low-statistics bins that are removed.
 
   effa_smoothing_sigma.png
-      Overlay of PS-10yr track effective area (upgoing dec band, fixed zenith)
+      Overlay of PS-14yr track effective area (upgoing dec band, fixed zenith)
       for several values of ``smoothing_sigma`` from 0 (no smoothing) to 2.0.
       Illustrates the trade-off between suppressing MC noise and preserving the
       high-energy shape.
 
-Both figures use the PS-10yr IRF (``resources/configs/ps10yr_detector_response.h5``)
+Both figures use the PS-14yr IRF (``resources/configs/ps14yr_detector_response.h5``)
 which ships with ``smoothing_sigma=1.3`` and ``trim_isolated=True`` baked into
 its ``meta`` group.
 
@@ -45,8 +45,8 @@ from pathlib import Path
 from spore.detector.detector_response.utils import effa_helper
 
 _REPO       = Path(__file__).resolve().parents[2]
-PS_RESPONSE = _REPO / "resources" / "configs" / "ps10yr_detector_response.h5"
-OUT_DIR     = _REPO / "scripts" / "paper_plots"
+PS_RESPONSE = _REPO / "resources" / "configs" / "ps14yr_detector_response.h5"
+OUT_DIR     = _REPO / "paper" / "figures"
 
 # Upgoing dec band: zenith closest to 140°
 _ZEN_TARGET = np.radians(140.0)
@@ -111,13 +111,13 @@ def main(ps_response_path=PS_RESPONSE, out_dir=OUT_DIR):
     axes[0].legend(fontsize=9, loc="upper left")
 
     fig.suptitle(
-        f"PS-10yr track effective area — {zen_label}\n"
+        f"PS-14yr track effective area — {zen_label}\n"
         "Effect of trim_isolated  (smoothing_sigma = 0)",
         fontsize=11,
     )
     plt.tight_layout()
-    out = out_dir / "effa_trim_isolated.png"
-    plt.savefig(out, dpi=150)
+    out = out_dir / "effa_trim_isolated.pdf"
+    plt.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close()
 
@@ -128,7 +128,7 @@ def main(ps_response_path=PS_RESPONSE, out_dir=OUT_DIR):
         "σ = 0  (no smoothing)",
         "σ = 0.5",
         "σ = 1.0",
-        "σ = 1.3  (PS-10yr default)",
+        "σ = 1.3  (PS-14yr default)",
         "σ = 2.0",
     ]
 
@@ -148,7 +148,7 @@ def main(ps_response_path=PS_RESPONSE, out_dir=OUT_DIR):
     ax.set_xlabel("True energy [TeV]", fontsize=11)
     ax.set_ylabel(r"Effective area [m$^2$]", fontsize=11)
     ax.set_title(
-        f"PS-10yr track effective area — {zen_label}\n"
+        f"PS-14yr track effective area — {zen_label}\n"
         "Effect of smoothing_sigma  (trim_isolated = True)",
         fontsize=11,
     )
@@ -157,8 +157,8 @@ def main(ps_response_path=PS_RESPONSE, out_dir=OUT_DIR):
     ax.legend(fontsize=9, loc="upper left")
 
     plt.tight_layout()
-    out = out_dir / "effa_smoothing_sigma.png"
-    plt.savefig(out, dpi=150)
+    out = out_dir / "effa_smoothing_sigma.pdf"
+    plt.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close()
 

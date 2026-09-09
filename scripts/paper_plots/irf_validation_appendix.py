@@ -7,10 +7,10 @@ spectral convolution: any discrepancy is a pure sampler artefact.
 
 Four figures are produced and saved individually:
 
-  ps10yr_energy_smearing.png   PS-10yr track  — CDF of log10(E_reco / E_true)
-  ps10yr_psf.png               PS-10yr track  — CDF of psi (degrees)
-  hese_energy_smearing.png     HESE-7yr astro_cascade — CDF of log10(E_reco / E_true)
-  hese_psf.png                 HESE-7yr astro_cascade — CDF of psi (degrees)
+  ps14yr_energy_smearing.pdf   PS-14yr track  — CDF of log10(E_reco / E_true)
+  ps14yr_psf.pdf               PS-14yr track  — CDF of psi (degrees)
+  hese_energy_smearing.pdf     HESE-7yr astro_cascade — CDF of log10(E_reco / E_true)
+  hese_psf.pdf                 HESE-7yr astro_cascade — CDF of psi (degrees)
 
 Each figure contains four curves (one per true energy).  Solid lines show the
 analytic CDF derived directly from the IRF table; dashed lines show the
@@ -40,11 +40,11 @@ from spore.event_sampling.utils import smear_truth
 from spore.conventions import SkyCoordinate
 
 _REPO         = Path(__file__).resolve().parents[2]
-PS_RESPONSE   = _REPO / "resources" / "configs" / "ps10yr_detector_response.h5"
+PS_RESPONSE   = _REPO / "resources" / "configs" / "ps14yr_detector_response.h5"
 HESE_RESPONSE = _REPO / "resources" / "hese_7yr_detector_response.h5"
-OUT_DIR       = _REPO / "scripts" / "paper_plots"
+OUT_DIR       = _REPO / "paper" / "figures"
 
-# True energies (GeV) — placed at PS-10yr bin centres for unambiguous look-up.
+# True energies (GeV) — placed at PS-14yr bin centres for unambiguous look-up.
 E_TRUE_GEV = [
     10 ** 4.25,   #  ~18  TeV
     10 ** 5.25,   #  ~180 TeV
@@ -56,9 +56,19 @@ COLORS = ["#4477AA", "#EE6677", "#228833", "#CCBB44"]   # Paul Tol colorblind-sa
 N_SAMPLES = 100_000
 RNG_SEED  = 42
 
-# PS-10yr: upgoing dec band (zenith 100–180 deg)
-PS_DEC_BAND_IDX   = 2
-PS_ZENITH_MID_RAD = np.radians(140.0)
+# Northern (upgoing) sky.  The declination band must be looked up rather than
+# hard-coded: the 10-year release bins the smearing matrix in three bands and
+# the 14-year release in 41, so a fixed index does not mean the same thing in
+# both.  The sampling zenith is derived from the same declination, so the
+# analytic and sampled curves refer to the same band by construction.
+PS_DEC_DEG = 30.0
+PS_ZENITH_MID_RAD = np.arccos(-np.sin(np.radians(PS_DEC_DEG)))
+
+
+def ps_dec_band_index(ps_tables, dec_deg=PS_DEC_DEG):
+    """Index of the smearing declination band containing ``dec_deg``."""
+    edges = np.asarray(ps_tables["dec_edges"], float)
+    return int(np.clip(np.searchsorted(edges, dec_deg) - 1, 0, len(edges) - 2))
 
 # HESE: PSF and energy resolution are zenith-independent
 HESE_SC         = SkyCoordinate(0.0, 0.0)
@@ -69,11 +79,12 @@ LN10 = np.log(10.0)
 
 
 def load_ps_tables(ps_response_path=PS_RESPONSE):
-    """Load PS-10yr smearing tables from HDF5."""
+    """Load PS-14yr smearing tables from HDF5."""
     with h5py.File(ps_response_path) as hf:
         sm = hf["track/smearing"]
         return dict(
             log10et_edges  = sm["log10e_true_edges"][:],
+            dec_edges      = sm["dec_edges"][:],
             log10er_lo_all = sm["log10e_reco_lo"][:],
             log10er_hi_all = sm["log10e_reco_hi"][:],
             psf_lo_all     = sm["psf_lo"][:],
@@ -95,8 +106,10 @@ def load_hese_tables(hese_response_path=HESE_RESPONSE, morph=HESE_MORPH):
         )
 
 
-def ps_analytic_energy_cdf(log10et_mid, ps_tables, dec_band_idx=PS_DEC_BAND_IDX):
-    """Analytic energy smearing CDF for a given log10(E_true) from PS-10yr tables."""
+def ps_analytic_energy_cdf(log10et_mid, ps_tables, dec_band_idx=None):
+    """Analytic energy smearing CDF for a given log10(E_true) from PS-14yr tables."""
+    if dec_band_idx is None:
+        dec_band_idx = ps_dec_band_index(ps_tables)
     edges = ps_tables["log10et_edges"]
     frac  = ps_tables["frac_all"]
     lo    = ps_tables["log10er_lo_all"]
@@ -114,8 +127,10 @@ def ps_analytic_energy_cdf(log10et_mid, ps_tables, dec_band_idx=PS_DEC_BAND_IDX)
             np.clip(np.concatenate([[0.0], np.cumsum(frac_e)]), 0, 1))
 
 
-def ps_analytic_psf_cdf(log10et_mid, ps_tables, dec_band_idx=PS_DEC_BAND_IDX):
-    """Analytic PSF CDF for a given log10(E_true) from PS-10yr tables."""
+def ps_analytic_psf_cdf(log10et_mid, ps_tables, dec_band_idx=None):
+    """Analytic PSF CDF for a given log10(E_true) from PS-14yr tables."""
+    if dec_band_idx is None:
+        dec_band_idx = ps_dec_band_index(ps_tables)
     edges = ps_tables["log10et_edges"]
     frac  = ps_tables["frac_all"]
     p_lo  = ps_tables["psf_lo_all"]
@@ -145,7 +160,7 @@ def hese_analytic_psf_cdf(e_true_gev, hese_tables):
 
 def draw_samples(ps_det, hese_det, e_true_list=E_TRUE_GEV, n_samples=N_SAMPLES, seed=RNG_SEED):
     """
-    Draw monochromatic samples through PS-10yr and HESE smearing.
+    Draw monochromatic samples through PS-14yr and HESE smearing.
 
     Returns
     -------
@@ -216,7 +231,7 @@ def make_figures(ps_tables, hese_tables,
     lw       = 1.8
     cdf_u    = np.arange(1, N_SAMPLES + 1) / N_SAMPLES
 
-    # Figure 1: PS-10yr energy smearing
+    # Figure 1: PS-14yr energy smearing
     fig, ax = plt.subplots(figsize=(6, 5))
     for e_true_gev, color in zip(e_true_list, COLORS):
         log10et = np.log10(e_true_gev)
@@ -228,16 +243,16 @@ def make_figures(ps_tables, hese_tables,
     ax.set_ylim(-0.02, 1.05)
     ax.set_xlabel(r"$\log_{10}(E_{\rm reco}\,/\,E_{\rm true})$", fontsize=12)
     ax.set_ylabel("CDF", fontsize=12)
-    ax.set_title("PS-10yr track — energy smearing\nupgoing dec band (dec > 10°)", fontsize=11)
+    ax.set_title("PS-14yr track — energy smearing\nupgoing dec band (dec > 10°)", fontsize=11)
     ax.grid(True, lw=0.4, alpha=0.5)
     _add_legend(ax, irf_ls=irf_ls, spore_ls=spore_ls, lw=lw, e_true_list=e_true_list)
     plt.tight_layout()
-    out = out_dir / "ps10yr_energy_smearing.png"
-    plt.savefig(out, dpi=150)
+    out = out_dir / "ps14yr_energy_smearing.pdf"
+    plt.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close()
 
-    # Figure 2: PS-10yr PSF
+    # Figure 2: PS-14yr PSF
     fig, ax = plt.subplots(figsize=(6, 5))
     for e_true_gev, color in zip(e_true_list, COLORS):
         log10et = np.log10(e_true_gev)
@@ -249,12 +264,12 @@ def make_figures(ps_tables, hese_tables,
     ax.set_ylim(-0.02, 1.05)
     ax.set_xlabel(r"$\psi$ [deg]", fontsize=12)
     ax.set_ylabel("CDF", fontsize=12)
-    ax.set_title("PS-10yr track — PSF\nupgoing dec band (dec > 10°)", fontsize=11)
+    ax.set_title("PS-14yr track — PSF\nupgoing dec band (dec > 10°)", fontsize=11)
     ax.grid(True, lw=0.4, alpha=0.5, which="both")
     _add_legend(ax, irf_ls=irf_ls, spore_ls=spore_ls, lw=lw, e_true_list=e_true_list)
     plt.tight_layout()
-    out = out_dir / "ps10yr_psf.png"
-    plt.savefig(out, dpi=150)
+    out = out_dir / "ps14yr_psf.pdf"
+    plt.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close()
 
@@ -278,8 +293,8 @@ def make_figures(ps_tables, hese_tables,
     ax.grid(True, lw=0.4, alpha=0.5)
     _add_legend(ax, irf_ls=irf_ls, spore_ls=spore_ls, lw=lw, e_true_list=e_true_list)
     plt.tight_layout()
-    out = out_dir / "hese_energy_smearing.png"
-    plt.savefig(out, dpi=150)
+    out = out_dir / "hese_energy_smearing.pdf"
+    plt.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close()
 
@@ -299,8 +314,8 @@ def make_figures(ps_tables, hese_tables,
     ax.grid(True, lw=0.4, alpha=0.5, which="both")
     _add_legend(ax, irf_ls=irf_ls, spore_ls=spore_ls, lw=lw, e_true_list=e_true_list)
     plt.tight_layout()
-    out = out_dir / "hese_psf.png"
-    plt.savefig(out, dpi=150)
+    out = out_dir / "hese_psf.pdf"
+    plt.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close()
 

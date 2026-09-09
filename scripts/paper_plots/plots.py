@@ -1,3 +1,4 @@
+import json
 import os
 import numpy as np
 import h5py as h5
@@ -194,8 +195,11 @@ def hese_comparison(datafile):
     plt.close(fig)
 
 def ps_track_roundtrip(datafile):
+    # The round trip moved to the IceCube 14-year track release (IceTracks-DR2);
+    # ``figure_dr2`` is written by pstracks_roundtrip_dr2.py.  Fall back to the
+    # 10-year group so an older plotting_data.h5 still renders.
     with h5.File(datafile) as h5f:
-        gp        = h5f["figure_5"]
+        gp        = h5f["figure_dr2"] if "figure_dr2" in h5f else h5f["figure_5"]
         sd_cents  = gp["sd_cents"][:]
         h_atmo    = gp["h_atmo"][:]
         h_astro   = gp["h_astro"][:]
@@ -285,7 +289,7 @@ def ps_track_roundtrip(datafile):
     axs[0, 0].legend(loc="upper left", fontsize=9.5)
     axs[0, 0].set_ylabel(r"$N_{\mathrm{event}}$")
 
-    fig.savefig(os.path.join(OUTDIR, "10yr_ps_data_vs_sampled.pdf"))
+    fig.savefig(os.path.join(OUTDIR, "14yr_ps_data_vs_sampled.pdf"))
     plt.close(fig)
 
 def ps_track_eddington(datafile):
@@ -495,6 +499,7 @@ def point_source_demo(datafile):
 
     plt.tight_layout()
     plt.savefig(os.path.join(OUTDIR, "point_source_demo.pdf"))
+    plt.close(fig)
 
 
 def main(args=None):

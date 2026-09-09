@@ -39,12 +39,12 @@ def _sindecs(events):
 if __name__ == "__main__":
     south_polar = Detector.from_config({
         "properties": {"latitude": -90.0, "longitude": 0.0, "depth": 1945, "medium": "Ice"},
-        "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
+        "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps14yr_detector_response.h5")},
     })
 
     mediterranean = Detector.from_config({
         "properties": {"latitude": 36.3, "longitude": 16.1, "depth": 3500, "medium": "Water"},
-        "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
+        "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps14yr_detector_response.h5")},
     })
 
     atmo_src = ExtendedSource.from_config(

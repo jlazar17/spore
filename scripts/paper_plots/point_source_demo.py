@@ -92,7 +92,7 @@ def _event_coords(events):
 if __name__ == "__main__":
     det = Detector.from_config({
         "properties": {"latitude": -90.0, "longitude": 0.0, "depth": 1945, "medium": "Ice"},
-        "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps10yr_detector_response.h5")},
+        "response": {"detector_response_file": os.path.join(REPO, "resources", "configs", "ps14yr_detector_response.h5")},
     })
 
     src       = PointSource.from_config(SOURCE_CONFIG)
