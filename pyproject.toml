@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "spore"
-version = "0.1.0"
+version = "1.0.0"
 description = "Sampling Pipeline for Observatory Response Estimation — multi-detector neutrino point source simulation"
 authors = [
     "Jeffrey Lazar <jeff.p.lazar@gmail.com>",
