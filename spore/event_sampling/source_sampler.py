@@ -20,6 +20,7 @@ def SourceSampler(
     n_dec: int = 40,
     n_ra: int = 40,
     adaptive_energy_grid: bool = True,
+    uniform_fraction: float = 0.5,
     e_min: float = None,
     e_max: float = None,
 ):
@@ -45,6 +46,9 @@ def SourceSampler(
         n_ra: Number of RA grid points (extended source only).  Default 40.
         adaptive_energy_grid: Concentrate energy grid points near the
             detection threshold (extended source only).  Default True.
+        uniform_fraction: Weight of the uniform-in-log(E) CDF blended into the
+            mass CDF when placing the adaptive energy grid (extended source
+            only), in [0, 1].  Default 0.5.
         e_min: Minimum energy in GeV.  If None, read from the detector
             response.
         e_max: Maximum energy in GeV.  If None, read from the detector
@@ -75,6 +79,7 @@ def SourceSampler(
             n_dec=n_dec,
             n_ra=n_ra,
             adaptive_energy_grid=adaptive_energy_grid,
+            uniform_fraction=uniform_fraction,
             e_min=e_min,
             e_max=e_max,
         )

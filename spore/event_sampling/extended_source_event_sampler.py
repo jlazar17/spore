@@ -62,6 +62,7 @@ class ExtendedSourceEventSampler(EventSampler):
         n_e: int = 40,
         n_time_samples: int = None,
         adaptive_energy_grid: bool = True,
+        uniform_fraction: float = 0.5,
         e_min: float = None,
         e_max: float = None,
     ):
@@ -88,6 +89,13 @@ class ExtendedSourceEventSampler(EventSampler):
                 concentrating resolution near the detection threshold where the
                 effective area rises steeply.  If False, use uniform log(E)
                 spacing.
+            uniform_fraction: Weight of the uniform-in-log(E) CDF blended into
+                the mass CDF before quantiles are taken, in [0, 1].  Only used
+                when ``adaptive_energy_grid`` is True.  0 gives pure equal-mass
+                placement, which can leave a single cell spanning more than a
+                decade at the depleted end of a steeply falling spectrum; 1
+                gives a uniform log grid.  Default 0.5, which bounds the widest
+                cell at twice the uniform spacing.
             e_min: Minimum energy in GeV for the sampling grid.  If None, read
                 from the detector response IRF.
             e_max: Maximum energy in GeV for the sampling grid.  If None, read
@@ -102,6 +110,7 @@ class ExtendedSourceEventSampler(EventSampler):
                     n_dec=n_dec, n_ra=n_ra, n_e=n_e,
                     n_time_samples=n_time_samples,
                     adaptive_energy_grid=adaptive_energy_grid,
+                    uniform_fraction=uniform_fraction,
                     e_min=e_min, e_max=e_max,
                 )
                 for d in det
@@ -142,6 +151,7 @@ class ExtendedSourceEventSampler(EventSampler):
             log_es = build_adaptive_log_energy_grid(
                 n_e, first_effa, src, first_morph,
                 e_min=e_min, e_max=e_max,
+                uniform_fraction=uniform_fraction,
             )
         else:
             log_es = np.linspace(np.log(e_min), np.log(e_max), n_e)
