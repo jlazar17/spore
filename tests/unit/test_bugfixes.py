@@ -271,3 +271,65 @@ class TestSmearingAngularUnits:
     def test_degree_dec_edges_accepted(self, joint_smearing_detector_factory):
         det = joint_smearing_detector_factory(latitude_deg=-90.0)
         assert det.response.joint_smearing is not None
+
+
+class TestPoleExtrapolationDoesNotUseDeadColumns:
+    """Extrapolating to cos(zen) = ±1 must not read the log-zero sentinel.
+
+    Dead cells are stored as a large negative sentinel in log space.  When the
+    outermost zenith column is live but its neighbour is dead -- which happens
+    whenever the sensitive zenith range ends between two tabulated columns, as
+    it does in the IceCube 14-year track release around \\SI{20}{\\TeV} -- a
+    slope taken across that pair is of order (log A - sentinel) / dcz.
+    Extrapolating it to the pole inflated the effective area by ten orders of
+    magnitude, which in turn swamped the sampler with spurious events from the
+    dead half of the sky.
+    """
+
+    @staticmethod
+    def _tabulated():
+        # Three zenith columns; at the lowest energies only the column nearest
+        # cos(zen) = +1 is live, so its neighbour is the sentinel.
+        zens = np.radians(np.array([8.0, 20.0, 26.0]))
+        es = np.logspace(2, 6, 12)
+        vals = np.zeros((len(es), 3))
+        vals[:, 0] = 100.0 * (es / es[0]) ** 0.5      # live everywhere
+        vals[6:, 1] = 50.0 * (es[6:] / es[0]) ** 0.5  # dead below index 6
+        vals[6:, 2] = 25.0 * (es[6:] / es[0]) ** 0.5
+        return zens, es, vals
+
+    def test_pole_value_is_bounded_by_the_tabulated_maximum(self):
+        zens, es, vals = self._tabulated()
+        f = effa_helper(zens, es, vals.copy(),
+                        trim_isolated=False, smoothing_sigma=0.0)
+        # cos(zen) = +1 is zenith 0, just outside the tabulated grid.
+        q = np.zeros(len(es))
+        got = f(q, es)
+        assert np.all(np.isfinite(got))
+        # Never more effective area than was tabulated at that energy.
+        assert np.all(got <= vals.max(axis=1) * (1.0 + 1e-9)), (
+            f"pole extrapolation exceeded the tabulated maximum: "
+            f"max ratio {np.max(got / np.maximum(vals.max(axis=1), 1e-30)):.3g}"
+        )
+
+    def test_upward_extrapolation_is_capped_at_the_tabulated_maximum(self):
+        """Extrapolation may not invent more area than was ever tabulated.
+
+        With both edge columns live the log slope is well defined and is still
+        used, but a profile rising toward the pole would otherwise extrapolate
+        past every tabulated value (here to 220.7 from an edge of 200.0).  The
+        cap holds it at the row maximum.  On the real IceCube responses the row
+        maximum is set by the opposite hemisphere and sits orders of magnitude
+        above the edge column, so the cap does not bind and the 10-year
+        response loads bit-identically.
+        """
+        zens = np.radians(np.array([8.0, 20.0, 26.0]))
+        es = np.logspace(2, 6, 12)
+        vals = np.outer(np.ones(len(es)), np.array([200.0, 120.0, 60.0]))
+        f = effa_helper(zens, es, vals.copy(),
+                        trim_isolated=False, smoothing_sigma=0.0)
+        got = f(np.zeros(len(es)), es)
+        # Rising toward cos(zen)=+1, so the pole must exceed the edge column
+        # but stay capped at the row maximum (here the edge column itself).
+        assert np.all(got >= 200.0 * (1.0 - 1e-9))
+        assert np.all(got <= 200.0 * (1.0 + 1e-9))

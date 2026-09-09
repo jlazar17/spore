@@ -142,16 +142,34 @@ def effa_helper(
 
     # Linearly extrapolate in cos(zen) to the hard boundaries zen=180° (cos=-1)
     # and zen=0° (cos=+1) so that queries at the poles return valid values.
+    #
+    # The slope must be taken between two *live* columns.  A dead cell carries
+    # the log-space sentinel, so a pair straddling the edge of the sensitive
+    # zenith range gives a slope of order (log A - sentinel) / dcz -- thousands
+    # per unit cos(zen) -- and extrapolating that even a short distance to the
+    # pole manufactures an effective area many orders of magnitude too large.
+    # Where either column is dead the log slope carries no information, so
+    # extrapolate flat instead.  As a backstop, the extrapolated column is
+    # capped at the largest tabulated value at that energy: widening the zenith
+    # range must never invent more effective area than was ever measured.
+    _row_max = log_vals.max(axis=1)
+
+    def _extrapolated(edge, nxt, dcz, dist):
+        """Log-space edge column extrapolated a distance ``dist`` outward."""
+        live = (edge > _LOG_ZERO_SENTINEL) & (nxt > _LOG_ZERO_SENTINEL)
+        slope = np.where(live, (edge - nxt) / dcz, 0.0)
+        return np.minimum(edge + slope * dist, _row_max)
+
     if cos_zens[0] > -1.0:
         dcz = cos_zens[1] - cos_zens[0]
-        slope = (log_vals[:, 1] - log_vals[:, 0]) / dcz
-        log_vals = np.column_stack([log_vals[:, 0] + slope * (-1.0 - cos_zens[0]), log_vals])
+        col = _extrapolated(log_vals[:, 0], log_vals[:, 1], dcz, cos_zens[0] - (-1.0))
+        log_vals = np.column_stack([col, log_vals])
         cos_zens = np.concatenate([[-1.0], cos_zens])
 
     if cos_zens[-1] < 1.0:
         dcz = cos_zens[-1] - cos_zens[-2]
-        slope = (log_vals[:, -1] - log_vals[:, -2]) / dcz
-        log_vals = np.column_stack([log_vals, log_vals[:, -1] + slope * (1.0 - cos_zens[-1])])
+        col = _extrapolated(log_vals[:, -1], log_vals[:, -2], dcz, 1.0 - cos_zens[-1])
+        log_vals = np.column_stack([log_vals, col])
         cos_zens = np.concatenate([cos_zens, [1.0]])
 
     # Build one PCHIP spline per cos(zen) column.  Evaluating all splines at a
