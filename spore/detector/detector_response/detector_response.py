@@ -376,9 +376,14 @@ def _parse_aeff_csv(path: str):
 def _smearing_tables_from_file(path: str) -> dict:
     """Parse one IceCube data-release smearing CSV file into sampling tables.
 
-    The smearing file has 14 E_true bins × 3 dec bands × 8800 rows per cell
-    (20 E_reco × 20 PSF × 22 AngErr bins).  Two degenerate cells
-    (E_true < 2.5 GeV, dec < −10°) are padded to maintain a uniform shape.
+    The file is a flat table of $(E_\\mathrm{true}, \\delta)$ cells, each
+    carrying its own adaptive $(E_\\mathrm{reco}, \\mathrm{PSF},
+    \\mathrm{AngErr})$ bin edges.  The per-cell bin counts are read from the
+    file rather than assumed, so both public track releases load unchanged:
+    the 10-year release (IceTracks-DR1) is 14 E_true bins × 3 dec bands ×
+    20 × 20 × 22, and the 14-year release (IceTracks-DR2) is 14 × 41 ×
+    20 × 20 × 20.  Degenerate cells with fewer bins than the file-wide
+    maximum are zero-padded to keep the array rectangular.
 
     Note:
         ``np.genfromtxt`` on a 56 MB CSV is extremely slow (~10–20 min).
@@ -389,11 +394,12 @@ def _smearing_tables_from_file(path: str) -> dict:
         path: Path to the IceCube smearing CSV file.
 
     Returns:
-        dict with keys ``log10e_true_edges`` (15,), ``dec_edges`` (4,),
-        ``log10e_reco_lo`` (14, 3, 20), ``log10e_reco_hi`` (14, 3, 20),
-        ``psf_lo`` (14, 3, 20), ``psf_hi`` (14, 3, 20),
-        ``ang_err_lo`` (14, 3, 22), ``ang_err_hi`` (14, 3, 22), and
-        ``fractional_counts`` (14, 3, 20, 20, 22).
+        dict with keys ``log10e_true_edges`` (n_et + 1,), ``dec_edges``
+        (n_dec + 1,), ``zenith_edges`` (n_dec + 1,), ``log10e_reco_lo`` /
+        ``log10e_reco_hi`` (n_et, n_dec, n_er), ``psf_lo`` / ``psf_hi``
+        (n_et, n_dec, n_psf), ``ang_err_lo`` / ``ang_err_hi``
+        (n_et, n_dec, n_ae), and ``fractional_counts``
+        (n_et, n_dec, n_er, n_psf, n_ae).
     """
     import os
     cache_path = os.path.splitext(path)[0] + "_smearing_cache.npz"
@@ -416,21 +422,46 @@ def _smearing_tables_from_file(path: str) -> dict:
     etrue_edges = np.append(etrue_lo_vals, d[:, 1].max())
     dec_edges   = np.append(dec_lo_vals,   d[:, 3].max())
 
-    N_ER = 20; N_PSF = 20; N_AE = 22
+    # Group rows by (E_true, dec) cell once, by sorting.  Masking the full
+    # table per cell is O(n_cells * n_rows), which is tolerable for DR1's
+    # 42 cells but not for DR2's 574 cells over 4.6M rows.
+    i_et_of_row = np.searchsorted(etrue_lo_vals, d[:, 0])
+    i_dc_of_row = np.searchsorted(dec_lo_vals,   d[:, 2])
+    block_of_row = i_et_of_row * n_dec + i_dc_of_row
 
-    frac   = np.zeros((n_et, n_dec, N_ER, N_PSF, N_AE))
-    er_lo  = np.zeros((n_et, n_dec, N_ER))
-    er_hi  = np.zeros((n_et, n_dec, N_ER))
-    p_lo   = np.zeros((n_et, n_dec, N_PSF))
-    p_hi   = np.zeros((n_et, n_dec, N_PSF))
-    ae_lo  = np.zeros((n_et, n_dec, N_AE))
-    ae_hi  = np.zeros((n_et, n_dec, N_AE))
+    order   = np.argsort(block_of_row, kind="stable")
+    d_sorted = d[order]
+    starts  = np.searchsorted(block_of_row[order], np.arange(n_et * n_dec), side="left")
+    stops   = np.searchsorted(block_of_row[order], np.arange(n_et * n_dec), side="right")
 
-    for i_et, et in enumerate(etrue_lo_vals):
-        for i_dc, dc in enumerate(dec_lo_vals):
-            mask = (d[:, 0] == et) & (d[:, 2] == dc)
-            sub  = d[mask]
-            cf, cel, ceh, cpl, cph, cal, cah = _build_cell_arrays(sub, N_ER, N_PSF, N_AE)
+    def _cell(i_et, i_dc):
+        b = i_et * n_dec + i_dc
+        return d_sorted[starts[b]:stops[b]]
+
+    # Per-cell bin counts are a property of the release, not a constant, so
+    # read the file-wide maxima rather than hard-coding them.
+    n_er = n_psf = n_ae = 0
+    for i_et in range(n_et):
+        for i_dc in range(n_dec):
+            sub = _cell(i_et, i_dc)
+            if len(sub) == 0:
+                continue
+            n_er  = max(n_er,  len(set(zip(sub[:, 4].round(6), sub[:, 5].round(6)))))
+            n_psf = max(n_psf, len(set(zip(sub[:, 6].round(6), sub[:, 7].round(6)))))
+            n_ae  = max(n_ae,  len(set(zip(sub[:, 8].round(6), sub[:, 9].round(6)))))
+
+    frac   = np.zeros((n_et, n_dec, n_er, n_psf, n_ae))
+    er_lo  = np.zeros((n_et, n_dec, n_er))
+    er_hi  = np.zeros((n_et, n_dec, n_er))
+    p_lo   = np.zeros((n_et, n_dec, n_psf))
+    p_hi   = np.zeros((n_et, n_dec, n_psf))
+    ae_lo  = np.zeros((n_et, n_dec, n_ae))
+    ae_hi  = np.zeros((n_et, n_dec, n_ae))
+
+    for i_et in range(n_et):
+        for i_dc in range(n_dec):
+            sub = _cell(i_et, i_dc)
+            cf, cel, ceh, cpl, cph, cal, cah = _build_cell_arrays(sub, n_er, n_psf, n_ae)
             frac[i_et, i_dc]   = cf
             er_lo[i_et, i_dc]  = cel
             er_hi[i_et, i_dc]  = ceh
@@ -559,12 +590,15 @@ def _build_smearing_sampler(data: dict) -> Callable:
     flat = frac.reshape(n_et, n_dec, -1)
     totals = flat.sum(axis=-1, keepdims=True)
     # Cells with no counts get a uniform fallback (they will not be reached
-    # in practice because the A_eff is zero there)
-    flat_norm = np.where(
-        totals > 0,
-        flat / totals,
-        np.ones_like(flat) / flat.shape[-1],
-    )
+    # in practice because the A_eff is zero there).  ``np.where`` evaluates
+    # both branches, so the empty cells divide by zero before being discarded;
+    # silence that rather than emit a warning the user cannot act on.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        flat_norm = np.where(
+            totals > 0,
+            flat / totals,
+            np.ones_like(flat) / flat.shape[-1],
+        )
     cum = np.cumsum(flat_norm, axis=-1)   # (n_et, n_dec, n_er*n_psf*n_ae)
 
     def sample(true_energy_GeV: float, zenith_rad: float, rng=None):
