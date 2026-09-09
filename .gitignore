@@ -40,3 +40,10 @@ scratch/
 
 # Debug scripts
 scripts/debug_atmo_rates.py
+
+# Local working caches for paper figures
+scripts/paper_plots/_ngc1068_ref/
+
+# Derived detector response: 36 MB, regenerate with
+# scripts/build_ps14yr_detector_response.py (see scripts/README.md)
+resources/configs/ps14yr_detector_response.h5
